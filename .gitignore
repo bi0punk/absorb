@@ -2,7 +2,9 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+*.json
+data_instagram/
+debug/
 # C extensions
 *.so
 
