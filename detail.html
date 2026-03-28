@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}Post {{ post.shortcode }}{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ── -->
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb" style="background:none;padding:0;font-size:.83rem">
+    <li class="breadcrumb-item">
+      <a href="{{ url_for('index') }}" style="color:var(--muted);text-decoration:none">
+        <i class="bi bi-grid-1x2-fill me-1"></i>Dashboard
+      </a>
+    </li>
+    <li class="breadcrumb-item active" style="color:var(--text)">
+      {{ post.shortcode }}
+    </li>
+  </ol>
+</nav>
+
+<!-- ── Header ── -->
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
+  <div>
+    <h1 class="page-title d-flex align-items-center gap-2">
+      {% if post.kind == 'reel' %}
+        <span class="badge rounded-pill badge-reel px-2 py-1" style="font-size:.7rem">
+          <i class="bi bi-play-fill"></i> Reel
+        </span>
+      {% else %}
+        <span class="badge rounded-pill badge-post px-2 py-1" style="font-size:.7rem">
+          <i class="bi bi-image"></i> Post
+        </span>
+      {% endif %}
+      <span style="font-family:'Space Mono',monospace;font-size:1.1rem">{{ post.shortcode }}</span>
+    </h1>
+    <p class="page-sub">Análisis detallado del post</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ post.post_url }}" target="_blank"
+       class="btn btn-sm d-flex align-items-center gap-2"
+       style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px">
+      <i class="bi bi-box-arrow-up-right"></i> Ver en Instagram
+    </a>
+    <a href="{{ url_for('index') }}"
+       class="btn btn-sm d-flex align-items-center gap-2"
+       style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px">
+      <i class="bi bi-arrow-left"></i> Volver
+    </a>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- ── Imagen ── -->
+  <div class="col-lg-5">
+    <div class="card-dark h-100">
+      <div class="card-body p-0" style="border-radius:var(--radius);overflow:hidden">
+        {% set img = post.get('image_path','') %}
+        {% if img %}
+          {% set rel = img.replace('data_instagram/', '', 1) if img.startswith('data_instagram/') else img %}
+          <img src="{{ url_for('serve_image', rel_path=rel) }}"
+               alt="Post {{ post.shortcode }}"
+               class="w-100"
+               style="border-radius:var(--radius);display:block;max-height:600px;object-fit:contain;background:var(--surface2)"
+               onerror="this.outerHTML='<div style=\'padding:3rem;text-align:center;color:var(--muted)\'><i class=\'bi bi-image fs-1\'></i><br>Imagen no disponible</div>'" />
+        {% else %}
+          <div style="padding:3rem;text-align:center;color:var(--muted)">
+            <i class="bi bi-image fs-1"></i>
+            <p class="mt-2 small">Sin imagen</p>
+          </div>
+        {% endif %}
+      </div>
+
+      {% if post.get('preprocessed_image') %}
+      <div class="card-body pt-0">
+        <button class="btn btn-sm w-100 mt-2"
+                style="background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:8px;font-size:.78rem"
+                type="button" data-bs-toggle="collapse" data-bs-target="#preproc">
+          <i class="bi bi-eye me-1"></i> Ver imagen preprocesada (OCR)
+        </button>
+        <div class="collapse mt-2" id="preproc">
+          {% set rel2 = post.preprocessed_image.replace('data_instagram/', '', 1)
+                        if post.preprocessed_image.startswith('data_instagram/')
+                        else post.preprocessed_image %}
+          <img src="{{ url_for('serve_image', rel_path=rel2) }}"
+               alt="Preprocesada"
+               class="w-100"
+               style="border-radius:8px;filter:brightness(.85)"
+               onerror="this.style.display='none'" />
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Textos ── -->
+  <div class="col-lg-7 d-flex flex-column gap-3">
+
+    <!-- Caption -->
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-2 d-flex align-items-center gap-2">
+          <i class="bi bi-chat-text" style="color:var(--ig-pink)"></i> Caption
+        </h6>
+        {% if post.get('caption','').strip() %}
+          <p style="font-size:.88rem;line-height:1.65;color:var(--text);white-space:pre-wrap;margin:0">
+            {{ post.caption }}
+          </p>
+        {% else %}
+          <p class="text-muted small fst-italic mb-0">Sin caption disponible.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- OCR -->
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-2 d-flex align-items-center gap-2">
+          <i class="bi bi-fonts" style="color:#60a5fa"></i> Texto OCR (mejor resultado)
+        </h6>
+        {% if post.get('ocr_best','').strip() %}
+          <div style="background:var(--surface2);border-radius:8px;padding:.85rem;
+                      font-family:'Space Mono',monospace;font-size:.78rem;
+                      line-height:1.7;color:#c0e8ff;white-space:pre-wrap;
+                      border:1px solid var(--border)">{{ post.ocr_best }}</div>
+        {% else %}
+          <p class="text-muted small fst-italic mb-0">Sin texto OCR detectado.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Texto combinado -->
+    {% if post.get('merged_text','').strip() %}
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-2 d-flex align-items-center gap-2">
+          <i class="bi bi-layers" style="color:#a78bfa"></i> Texto combinado
+          <span class="badge"
+                style="background:rgba(167,139,250,.15);color:#a78bfa;font-size:.65rem;font-weight:500">
+            Caption + OCR
+          </span>
+        </h6>
+        <div style="background:var(--surface2);border-radius:8px;padding:.85rem;
+                    font-size:.82rem;line-height:1.65;color:var(--text);white-space:pre-wrap;
+                    border:1px solid var(--border)">{{ post.merged_text }}</div>
+
+        <button class="btn btn-sm mt-2"
+                style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;font-size:.75rem"
+                onclick="copyText(this, `{{ post.merged_text | replace('`','\\`') | replace('\n','\\n') }}`)" >
+          <i class="bi bi-clipboard me-1"></i> Copiar
+        </button>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Metadata -->
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3 d-flex align-items-center gap-2">
+          <i class="bi bi-info-circle" style="color:#fbbf24"></i> Metadata
+        </h6>
+        <table class="table table-sm mb-0"
+               style="color:var(--text);font-size:.82rem;border-color:var(--border)">
+          <tbody>
+            <tr>
+              <td style="color:var(--muted);width:130px;border-color:var(--border)">Shortcode</td>
+              <td style="font-family:'Space Mono',monospace;border-color:var(--border)">
+                {{ post.shortcode }}
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--muted);border-color:var(--border)">Tipo</td>
+              <td style="border-color:var(--border)">
+                {% if post.kind == 'reel' %}
+                  <span class="badge badge-reel">Reel</span>
+                {% else %}
+                  <span class="badge badge-post">Post</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--muted);border-color:var(--border)">URL</td>
+              <td style="border-color:var(--border)">
+                <a href="{{ post.post_url }}" target="_blank"
+                   style="color:var(--ig-pink);font-size:.78rem;word-break:break-all">
+                  {{ post.post_url }}
+                </a>
+              </td>
+            </tr>
+            {% if post.get('image_path') %}
+            <tr>
+              <td style="color:var(--muted);border-color:var(--border)">Archivo</td>
+              <td style="font-family:'Space Mono',monospace;font-size:.72rem;
+                         word-break:break-all;border-color:var(--border)">
+                {{ post.image_path }}
+              </td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- JSON raw -->
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-2 d-flex align-items-center gap-2">
+          <i class="bi bi-braces" style="color:#34d399"></i> JSON raw
+          <button class="btn btn-sm ms-auto"
+                  style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:.72rem"
+                  data-bs-toggle="collapse" data-bs-target="#rawJson">
+            Mostrar/Ocultar
+          </button>
+        </h6>
+        <div class="collapse" id="rawJson">
+          <pre style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                      padding:.85rem;font-size:.72rem;color:#a0f0c0;overflow:auto;max-height:350px;
+                      white-space:pre;margin:0">{{ post | tojson(indent=2) }}</pre>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col -->
+</div><!-- /row -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Copiado';
+    showToast('Texto copiado al portapapeles.', 'success');
+    setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard me-1"></i> Copiar', 2000);
+  });
+}
+</script>
+{% endblock %}

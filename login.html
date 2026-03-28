@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Login Instagram{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h1 class="page-title">Login Instagram</h1>
+  <p class="page-sub">Guarda tu sesión para poder scrapear sin bloqueos</p>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+
+    <!-- Estado actual -->
+    <div class="card-dark mb-4">
+      <div class="card-body d-flex align-items-center gap-3">
+        {% if has_state %}
+          <div style="width:44px;height:44px;border-radius:50%;background:rgba(74,222,128,.15);
+                      display:flex;align-items:center;justify-content:center;color:#4ade80;font-size:1.3rem;flex-shrink:0">
+            <i class="bi bi-shield-check-fill"></i>
+          </div>
+          <div>
+            <div class="fw-semibold">Sesión guardada ✅</div>
+            <div class="small" style="color:var(--muted)">
+              El archivo <code>ig_state.json</code> existe. El scraper usará esta sesión.
+            </div>
+          </div>
+        {% else %}
+          <div style="width:44px;height:44px;border-radius:50%;background:rgba(248,113,113,.15);
+                      display:flex;align-items:center;justify-content:center;color:#f87171;font-size:1.3rem;flex-shrink:0">
+            <i class="bi bi-shield-x-fill"></i>
+          </div>
+          <div>
+            <div class="fw-semibold" style="color:#f87171">Sin sesión activa</div>
+            <div class="small" style="color:var(--muted)">
+              No se encontró <code>ig_state.json</code>. Sigue los pasos de abajo para hacer login.
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Instrucciones -->
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3 d-flex align-items-center gap-2">
+          <i class="bi bi-terminal-fill" style="color:var(--ig-pink)"></i>
+          Cómo hacer login
+        </h6>
+
+        <ol style="color:var(--text);font-size:.88rem;line-height:1.9;padding-left:1.2rem">
+          <li>
+            Abre una terminal en el directorio del proyecto.
+          </li>
+          <li>
+            Ejecuta el script de login:
+            <div style="background:var(--surface2);border:1px solid var(--border);
+                        border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;
+                        font-family:'Space Mono',monospace;font-size:.8rem;color:#a0e0b0">
+              python login_instagram.py
+            </div>
+          </li>
+          <li>
+            Se abrirá una ventana de Chrome. Inicia sesión en Instagram
+            normalmente (usuario y contraseña, 2FA si aplica).
+          </li>
+          <li>
+            Cuando estés dentro del feed, vuelve a la terminal y presiona
+            <kbd style="background:var(--surface2);border:1px solid var(--border);
+                        border-radius:4px;padding:.1rem .35rem;font-size:.75rem">Enter</kbd>.
+          </li>
+          <li>
+            El estado se guarda en <code>ig_state.json</code> y
+            el scraper lo usará automáticamente.
+          </li>
+        </ol>
+
+        <div class="alert mt-3 mb-0"
+             style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
+                    border-radius:8px;color:#fde68a;font-size:.82rem">
+          <i class="bi bi-lightbulb-fill me-2"></i>
+          <strong>Consejo:</strong> Si el scraper empieza a fallar o devuelve 0 posts,
+          repite el proceso de login — las sesiones de Instagram expiran.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card-dark">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3 d-flex align-items-center gap-2">
+          <i class="bi bi-question-circle-fill" style="color:#60a5fa"></i>
+          Preguntas frecuentes
+        </h6>
+
+        <div class="accordion accordion-flush" id="faq"
+             style="--bs-accordion-bg:transparent;--bs-accordion-border-color:var(--border);
+                    --bs-accordion-color:var(--text);--bs-accordion-btn-color:var(--text);
+                    --bs-accordion-btn-bg:transparent;--bs-accordion-active-bg:transparent;
+                    --bs-accordion-active-color:var(--ig-pink)">
+
+          <div class="accordion-item" style="border-bottom:1px solid var(--border)">
+            <h2 class="accordion-header">
+              <button class="accordion-button collapsed" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#faq1"
+                      style="font-size:.85rem;font-weight:600">
+                ¿Es seguro guardar la sesión?
+              </button>
+            </h2>
+            <div id="faq1" class="accordion-collapse collapse" data-bs-parent="#faq">
+              <div class="accordion-body" style="font-size:.83rem;color:var(--muted)">
+                El archivo <code>ig_state.json</code> contiene cookies de sesión.
+                Trátalo como una contraseña: no lo compartas ni lo subas a repositorios públicos.
+                Agrégalo a tu <code>.gitignore</code>.
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item" style="border-bottom:1px solid var(--border)">
+            <h2 class="accordion-header">
+              <button class="accordion-button collapsed" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#faq2"
+                      style="font-size:.85rem;font-weight:600">
+                ¿Puedo scrapear sin hacer login?
+              </button>
+            </h2>
+            <div id="faq2" class="accordion-collapse collapse" data-bs-parent="#faq">
+              <div class="accordion-body" style="font-size:.83rem;color:var(--muted)">
+                Sí, para perfiles públicos. Sin embargo, Instagram puede bloquear
+                requests anónimos agresivos. Con sesión iniciada el scraper es más estable.
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item" style="border-bottom:1px solid var(--border)">
+            <h2 class="accordion-header">
+              <button class="accordion-button collapsed" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#faq3"
+                      style="font-size:.85rem;font-weight:600">
+                ¿Cuánto dura la sesión?
+              </button>
+            </h2>
+            <div id="faq3" class="accordion-collapse collapse" data-bs-parent="#faq">
+              <div class="accordion-body" style="font-size:.83rem;color:var(--muted)">
+                Las sesiones de Instagram duran aproximadamente 30–90 días,
+                pero pueden expirar antes si detectan actividad inusual.
+                Si el scraper empieza a fallar, haz login nuevamente.
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item">
+            <h2 class="accordion-header">
+              <button class="accordion-button collapsed" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#faq4"
+                      style="font-size:.85rem;font-weight:600">
+                El scraper devuelve 0 posts, ¿qué hago?
+              </button>
+            </h2>
+            <div id="faq4" class="accordion-collapse collapse" data-bs-parent="#faq">
+              <div class="accordion-body" style="font-size:.83rem;color:var(--muted)">
+                1. Revisa <code>debug/</code> — hay HTML y screenshots del estado de la página.<br>
+                2. Vuelve a hacer login con <code>login_instagram.py</code>.<br>
+                3. Asegúrate de que la URL del perfil sea correcta y el perfil sea público.
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

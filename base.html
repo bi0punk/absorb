@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}IG Scraper{% endblock %} · Dashboard</title>
+
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        crossorigin="anonymous" />
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+        crossorigin="anonymous" />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+        rel="stylesheet" />
+
+  <style>
+    :root {
+      --ig-pink:   #e1306c;
+      --ig-orange: #fd5949;
+      --ig-purple: #833ab4;
+      --ig-grad:   linear-gradient(135deg, var(--ig-purple) 0%, var(--ig-pink) 50%, var(--ig-orange) 100%);
+      --sidebar-w: 260px;
+      --bg:        #0f0f12;
+      --surface:   #18181f;
+      --surface2:  #22222d;
+      --border:    rgba(255,255,255,.07);
+      --text:      #e8e8f0;
+      --muted:     #8888a0;
+      --radius:    12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      position: fixed;
+      top: 0; left: 0;
+      width: var(--sidebar-w);
+      height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      overflow-y: auto;
+    }
+
+    .sidebar-logo {
+      padding: 1.5rem 1.25rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .logo-icon {
+      width: 38px; height: 38px;
+      background: var(--ig-grad);
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      color: #fff;
+      margin-right: .55rem;
+    }
+    .sidebar-logo span {
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -.02em;
+    }
+
+    .nav-section-label {
+      font-size: .68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      padding: 1.1rem 1.25rem .4rem;
+    }
+
+    .sidebar-nav .nav-link {
+      color: var(--muted);
+      padding: .55rem 1.25rem;
+      border-radius: var(--radius);
+      margin: .1rem .5rem;
+      font-size: .9rem;
+      font-weight: 500;
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      gap: .55rem;
+    }
+    .sidebar-nav .nav-link:hover,
+    .sidebar-nav .nav-link.active {
+      color: var(--text);
+      background: var(--surface2);
+    }
+    .sidebar-nav .nav-link.active {
+      background: rgba(225, 48, 108, .15);
+      color: var(--ig-pink);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border);
+      font-size: .78rem;
+      color: var(--muted);
+    }
+
+    /* ── Main ── */
+    #main {
+      margin-left: var(--sidebar-w);
+      padding: 2rem 2.25rem;
+      min-height: 100vh;
+    }
+
+    /* ── Cards ── */
+    .card-dark {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .card-dark .card-body { padding: 1.25rem; }
+
+    /* ── Stat chips ── */
+    .stat-chip {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+    }
+    .stat-chip .icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+    }
+    .stat-chip .label { font-size: .75rem; color: var(--muted); font-weight: 500; }
+    .stat-chip .value { font-size: 1.3rem; font-weight: 700; line-height: 1; }
+
+    /* ── Page header ── */
+    .page-title {
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -.03em;
+      margin-bottom: .2rem;
+    }
+    .page-sub {
+      color: var(--muted);
+      font-size: .88rem;
+    }
+
+    /* ── Post grid ── */
+    .post-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: transform .2s, box-shadow .2s, border-color .2s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .post-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px rgba(0,0,0,.45);
+      border-color: rgba(225,48,108,.35);
+      color: inherit;
+    }
+    .post-thumb-wrap {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      overflow: hidden;
+      background: var(--surface2);
+    }
+    .post-thumb-wrap img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transition: transform .35s;
+    }
+    .post-card:hover .post-thumb-wrap img { transform: scale(1.04); }
+    .post-type-badge {
+      position: absolute;
+      top: .6rem; right: .6rem;
+      background: rgba(0,0,0,.6);
+      backdrop-filter: blur(6px);
+      border-radius: 6px;
+      padding: .2rem .5rem;
+      font-size: .7rem;
+      font-weight: 700;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .post-body {
+      padding: .85rem 1rem;
+    }
+    .post-code {
+      font-family: 'Space Mono', monospace;
+      font-size: .72rem;
+      color: var(--muted);
+    }
+    .post-caption {
+      font-size: .82rem;
+      color: var(--muted);
+      margin-top: .3rem;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.45;
+    }
+    .no-thumb {
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: var(--muted);
+      font-size: 2rem;
+    }
+
+    /* ── Run form ── */
+    .run-form-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+    .run-log {
+      background: #0a0a0d;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: 'Space Mono', monospace;
+      font-size: .78rem;
+      color: #a0e0b0;
+      padding: 1rem;
+      height: 240px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .run-log .line-error { color: #ff7070; }
+    .run-log .line-warn  { color: #ffd070; }
+    .run-log .line-ok    { color: #70e0a0; }
+
+    /* ── Form controls dark ── */
+    .form-control-dark,
+    .form-select-dark {
+      background: var(--surface2) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text) !important;
+      border-radius: 8px !important;
+    }
+    .form-control-dark::placeholder { color: var(--muted) !important; }
+    .form-control-dark:focus,
+    .form-select-dark:focus {
+      box-shadow: 0 0 0 2px rgba(225,48,108,.35) !important;
+      border-color: var(--ig-pink) !important;
+      outline: none;
+    }
+    .form-select-dark option { background: var(--surface2); }
+
+    /* ── Btn gradient ── */
+    .btn-ig {
+      background: var(--ig-grad);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+      border-radius: 8px;
+      padding: .55rem 1.25rem;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn-ig:hover { opacity: .88; color: #fff; transform: translateY(-1px); }
+    .btn-ig:active { transform: translateY(0); }
+    .btn-ig:disabled { opacity: .45; pointer-events: none; }
+
+    /* ── Badges ── */
+    .badge-reel { background: rgba(131,58,180,.25); color: #c97fef; }
+    .badge-post { background: rgba(225,48,108,.2);  color: #f06e99; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar       { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 99px; }
+
+    /* ── Toast ── */
+    .toast-wrap {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 9999;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      #sidebar { display: none; }
+      #main { margin-left: 0; padding: 1rem; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<nav id="sidebar">
+  <div class="sidebar-logo d-flex align-items-center">
+    <span class="logo-icon"><i class="bi bi-instagram"></i></span>
+    <span>IG Scraper</span>
+  </div>
+
+  <div class="nav-section-label">Navegación</div>
+  <ul class="nav flex-column sidebar-nav">
+    <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"
+         href="{{ url_for('index') }}">
+        <i class="bi bi-grid-1x2-fill"></i> Dashboard
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link {% if request.endpoint == 'login_info' %}active{% endif %}"
+         href="{{ url_for('login_info') }}">
+        <i class="bi bi-shield-lock-fill"></i> Login Instagram
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="https://www.instagram.com" target="_blank">
+        <i class="bi bi-box-arrow-up-right"></i> Abrir Instagram
+      </a>
+    </li>
+  </ul>
+
+  <div class="sidebar-footer">
+    <i class="bi bi-circle-fill" style="color:#4ade80;font-size:.55rem;"></i>
+    Flask corriendo en localhost:5000
+  </div>
+</nav>
+
+<!-- ── Main Content ── -->
+<main id="main">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+        {{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        crossorigin="anonymous"></script>
+
+<script>
+function showToast(msg, type = 'success') {
+  const id = 'toast_' + Date.now();
+  const colors = { success: '#4ade80', error: '#f87171', info: '#60a5fa' };
+  const html = `
+    <div id="${id}" class="toast align-items-center show"
+         style="background:#18181f;border:1px solid rgba(255,255,255,.1);color:#e8e8f0;min-width:280px;"
+         role="alert" aria-live="assertive">
+      <div class="d-flex">
+        <div class="toast-body d-flex align-items-center gap-2">
+          <span style="color:${colors[type]||colors.info};font-size:.8rem">●</span>
+          ${msg}
+        </div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                data-bs-dismiss="toast"></button>
+      </div>
+    </div>`;
+  document.getElementById('toastWrap').insertAdjacentHTML('beforeend', html);
+  setTimeout(() => document.getElementById(id)?.remove(), 4500);
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
