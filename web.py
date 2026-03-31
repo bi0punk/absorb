@@ -10,7 +10,6 @@ import json
 import mimetypes
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 from flask import (
@@ -18,20 +17,21 @@ from flask import (
     Response,
     abort,
     jsonify,
-    redirect,
     render_template,
     request,
     send_file,
-    url_for,
 )
 
+from app import MAX_LIMIT, DEFAULT_LIMIT, parse_profile_sources
+
 # ── Config ─────────────────────────────────────────────────────────────────────
-BASE_DIR    = Path("data_instagram")
-SUMMARY_F   = BASE_DIR / "summary_latest_posts.json"
-APP_SCRIPT  = "app.py"            # no tocar
+BASE_DIR = Path("data_instagram")
+SUMMARY_F = BASE_DIR / "summary_latest_posts.json"
+APP_SCRIPT = "app.py"               # no tocar
 LOGIN_SCRIPT = "login_instagram.py"  # no tocar
 
 app = Flask(__name__)
+
 
 # ── Utilidades ──────────────────────────────────────────────────────────────────
 
@@ -65,9 +65,9 @@ def load_all_posts() -> list:
 
 
 def get_post(shortcode: str) -> dict | None:
-    for p in load_all_posts():
-        if p.get("shortcode") == shortcode:
-            return p
+    for post in load_all_posts():
+        if post.get("shortcode") == shortcode:
+            return post
     return None
 
 
@@ -77,7 +77,7 @@ def get_post(shortcode: str) -> dict | None:
 def index():
     posts = load_all_posts()
     has_state = Path("ig_state.json").exists()
-    return render_template("index.html", posts=posts, has_state=has_state)
+    return render_template("index.html", posts=posts, has_state=has_state, max_limit=MAX_LIMIT)
 
 
 @app.route("/post/<shortcode>")
@@ -92,7 +92,6 @@ def post_detail(shortcode: str):
 def serve_image(rel_path: str):
     """Sirve imágenes desde data_instagram/ de forma segura."""
     img_path = (BASE_DIR / rel_path).resolve()
-    # Seguridad: no salir del BASE_DIR
     if not str(img_path).startswith(str(BASE_DIR.resolve())):
         abort(403)
     if not img_path.exists():
@@ -118,22 +117,26 @@ def api_post(shortcode: str):
 def run_scraper():
     """
     Lanza app.py en segundo plano y hace stream de stdout/stderr al cliente
-    via Server-Sent Events para mostrar el progreso en tiempo real.
+    vía Server-Sent Events para mostrar el progreso en tiempo real.
     """
-    profile_url = request.form.get("profile_url", "").strip()
-    limit       = request.form.get("limit", "5").strip()
+    profile_urls_raw = request.form.get("profile_urls", "").strip()
+    profile_url_single = request.form.get("profile_url", "").strip()
+    limit_raw = request.form.get("limit", str(DEFAULT_LIMIT)).strip()
 
-    if not profile_url:
-        return jsonify({"error": "profile_url requerido"}), 400
+    sources = parse_profile_sources([profile_urls_raw, profile_url_single])
+    if not sources:
+        return jsonify({"error": "Debes ingresar al menos una fuente de Instagram."}), 400
 
     try:
-        limit_int = max(1, min(int(limit), 30))
+        limit_int = max(1, min(int(limit_raw), MAX_LIMIT))
     except ValueError:
-        limit_int = 5
+        limit_int = DEFAULT_LIMIT
 
     def generate():
-        cmd = [sys.executable, APP_SCRIPT, profile_url, str(limit_int)]
+        cmd = [sys.executable, APP_SCRIPT, *sources, str(limit_int)]
         yield f"data: ▶ Ejecutando: {' '.join(cmd)}\n\n"
+        yield f"data: [INFO] Fuentes recibidas: {sources}\n\n"
+        yield f"data: [INFO] Objetivo solicitado: {limit_int} posts nuevos\n\n"
 
         proc = subprocess.Popen(
             cmd,
@@ -142,10 +145,12 @@ def run_scraper():
             text=True,
             bufsize=1,
         )
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line:
-                yield f"data: {line}\n\n"
+
+        if proc.stdout is not None:
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    yield f"data: {line}\n\n"
 
         proc.wait()
         if proc.returncode == 0:
@@ -159,7 +164,6 @@ def run_scraper():
 
 @app.route("/login")
 def login_info():
-    """Página con instrucciones para hacer login."""
     has_state = Path("ig_state.json").exists()
     return render_template("login.html", has_state=has_state)
 
@@ -172,4 +176,4 @@ if __name__ == "__main__":
     print("  Instagram Scraper Dashboard")
     print("  http://localhost:5000")
     print("=" * 60)
-    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)
+    app.run(debug=True, host="0.0.0.0", port=5002, threaded=True)

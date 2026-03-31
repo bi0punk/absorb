@@ -159,7 +159,7 @@
     <h5 style="font-weight:700;margin-bottom:.4rem">Aún no hay posts</h5>
     <p style="color:var(--muted);max-width:360px;font-size:.9rem">
       Ejecuta un scraping para empezar. Haz clic en
-      <strong>Nuevo Scraping</strong> e ingresa la URL de un perfil de Instagram.
+      <strong>Nuevo Scraping</strong> e ingresa una o varias fuentes de Instagram.
     </p>
     <button class="btn-ig btn mt-2 d-flex align-items-center gap-2"
             data-bs-toggle="offcanvas" data-bs-target="#runPanel">
@@ -180,22 +180,27 @@
   </div>
   <div class="offcanvas-body">
     <p class="small mb-3" style="color:var(--muted)">
-      Ingresa la URL pública de un perfil de Instagram y el número de posts a extraer.
+      Ingresa una o varias fuentes de Instagram y la cantidad exacta de posts nuevos a extraer.
+      Los repetidos se saltan y el scraper sigue avanzando hasta completar el objetivo, si hay suficientes posts nuevos visibles.
     </p>
 
     <div class="mb-3">
-      <label class="form-label small fw-semibold">URL del perfil</label>
-      <input type="url" id="profileUrl" class="form-control form-control-dark"
-             placeholder="https://www.instagram.com/biobiochile/" />
+      <label class="form-label small fw-semibold">Fuentes de Instagram</label>
+      <textarea id="profileUrls" class="form-control form-control-dark" rows="5"
+                placeholder="https://www.instagram.com/biobiochile/
+https://www.instagram.com/cnnchile/
+@latercera"></textarea>
+      <div class="form-text" style="color:var(--muted)">
+        Una fuente por línea. También puedes usar usuario simple o separar por coma.
+      </div>
     </div>
     <div class="mb-3">
-      <label class="form-label small fw-semibold">Número de posts</label>
-      <select id="limitSelect" class="form-select form-select-dark">
-        <option value="3">3 posts</option>
-        <option value="5" selected>5 posts</option>
-        <option value="10">10 posts</option>
-        <option value="20">20 posts</option>
-      </select>
+      <label class="form-label small fw-semibold">Cantidad de posts nuevos</label>
+      <input type="number" id="limitInput" class="form-control form-control-dark"
+             min="1" max="{{ max_limit }}" value="5" placeholder="5" />
+      <div class="form-text" style="color:var(--muted)">
+        Máximo {{ max_limit }} por corrida.
+      </div>
     </div>
 
     <button class="btn-ig btn w-100 mb-3 d-flex align-items-center justify-content-center gap-2"
@@ -243,8 +248,8 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 const runBtn    = document.getElementById('runBtn');
 const runLog    = document.getElementById('runLog');
 const runDone   = document.getElementById('runDone');
-const profileUrl = document.getElementById('profileUrl');
-const limitSel  = document.getElementById('limitSelect');
+const profileUrls = document.getElementById('profileUrls');
+const limitInput  = document.getElementById('limitInput');
 
 function appendLog(line) {
   const div = document.createElement('div');
@@ -257,10 +262,17 @@ function appendLog(line) {
 }
 
 runBtn.addEventListener('click', async () => {
-  const url = profileUrl.value.trim();
-  if (!url) {
-    profileUrl.focus();
-    showToast('Ingresa una URL de perfil.', 'error');
+  const rawSources = profileUrls.value.trim();
+  if (!rawSources) {
+    profileUrls.focus();
+    showToast('Ingresa al menos una fuente.', 'error');
+    return;
+  }
+
+  const limitValue = parseInt(limitInput.value || '5', 10);
+  if (!Number.isFinite(limitValue) || limitValue < 1) {
+    limitInput.focus();
+    showToast('Ingresa una cantidad válida.', 'error');
     return;
   }
 
@@ -271,11 +283,20 @@ runBtn.addEventListener('click', async () => {
   runBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Ejecutando…';
 
   const formData = new FormData();
-  formData.append('profile_url', url);
-  formData.append('limit', limitSel.value);
+  formData.append('profile_urls', rawSources);
+  formData.append('limit', String(limitValue));
 
   try {
     const resp = await fetch('/run', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      let message = 'Error al iniciar el scraping.';
+      try {
+        const data = await resp.json();
+        if (data && data.error) message = data.error;
+      } catch (_) {}
+      throw new Error(message);
+    }
+
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
