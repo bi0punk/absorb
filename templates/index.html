@@ -51,16 +51,16 @@
   </div>
   <div class="col-6 col-md-3">
     <div class="stat-chip">
-      <div class="icon" style="background:rgba(74,222,128,.12);color:#4ade80">
-        <i class="bi bi-shield-check-fill"></i>
+      <div class="icon" style="background:{% if scheduler.running %}rgba(74,222,128,.12){% else %}rgba(250,204,21,.12){% endif %};color:{% if scheduler.running %}#4ade80{% else %}#facc15{% endif %}">
+        <i class="bi {% if scheduler.running %}bi-clock-history{% else %}bi-clock{% endif %}"></i>
       </div>
       <div>
-        <div class="label">Sesión</div>
+        <div class="label">Programador</div>
         <div class="value" style="font-size:.85rem;margin-top:.1rem">
-          {% if has_state %}
-            <span style="color:#4ade80">Activa</span>
+          {% if scheduler.running %}
+            <span style="color:#4ade80">Activo</span>
           {% else %}
-            <span style="color:#f87171">Sin login</span>
+            <span style="color:#facc15">Detenido</span>
           {% endif %}
         </div>
       </div>
@@ -68,7 +68,6 @@
   </div>
 </div>
 
-<!-- ── Alert sin sesión ── -->
 {% if not has_state %}
 <div class="alert d-flex align-items-center gap-3 mb-4"
      style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:var(--radius);color:#fca5a5">
@@ -77,14 +76,12 @@
     No hay sesión de Instagram guardada.
     <a href="{{ url_for('login_info') }}" class="text-decoration-underline" style="color:#fca5a5">
       Haz login primero
-    </a> para poder scrapeaR perfiles privados o evitar bloqueos.
+    </a> para poder scrapear perfiles privados o reducir bloqueos.
   </div>
 </div>
 {% endif %}
 
-<!-- ── Posts Grid ── -->
 {% if posts %}
-  <!-- Filtros rápidos -->
   <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
     <span class="text-muted small me-1">Filtrar:</span>
     <button class="btn btn-sm filter-btn active"
@@ -128,8 +125,7 @@
               <i class="bi bi-image-fill"></i>
             </div>
           {% endif %}
-          <span class="post-type-badge
-                       {% if post.kind == 'reel' %}badge-reel{% else %}badge-post{% endif %}">
+          <span class="post-type-badge {% if post.kind == 'reel' %}badge-reel{% else %}badge-post{% endif %}">
             {% if post.kind == 'reel' %}
               <i class="bi bi-play-fill"></i> Reel
             {% else %}
@@ -139,6 +135,22 @@
         </div>
         <div class="post-body">
           <div class="post-code">{{ post.shortcode }}</div>
+          {% if post.get('source_label') or post.get('post_date') %}
+          <div class="mb-2 d-flex gap-1 flex-wrap">
+            {% if post.get('source_label') %}
+            <span class="badge"
+                  style="background:rgba(96,165,250,.14);color:#93c5fd;border:1px solid rgba(96,165,250,.22);font-size:.68rem;font-weight:600">
+              <i class="bi bi-person-circle me-1"></i>{{ post.source_label }}
+            </span>
+            {% endif %}
+            {% if post.get('post_date') %}
+            <span class="badge"
+                  style="background:rgba(167,139,250,.14);color:#c4b5fd;border:1px solid rgba(167,139,250,.22);font-size:.68rem;font-weight:600">
+              <i class="bi bi-calendar-event me-1"></i>{{ post.post_date }}
+            </span>
+            {% endif %}
+          </div>
+          {% endif %}
           {% set preview = post.get('caption','') or post.get('ocr_best','') %}
           {% if preview %}
           <p class="post-caption">{{ preview }}</p>
@@ -150,16 +162,14 @@
     </div>
     {% endfor %}
   </div>
-
 {% else %}
-  <!-- Empty state -->
   <div class="d-flex flex-column align-items-center justify-content-center text-center py-5 mt-4"
        style="min-height:320px;background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius)">
     <div style="font-size:3rem;margin-bottom:1rem">📷</div>
     <h5 style="font-weight:700;margin-bottom:.4rem">Aún no hay posts</h5>
     <p style="color:var(--muted);max-width:360px;font-size:.9rem">
       Ejecuta un scraping para empezar. Haz clic en
-      <strong>Nuevo Scraping</strong> e ingresa una o varias fuentes de Instagram.
+      <strong>Nuevo Scraping</strong> e ingresa las fuentes con sus cupos.
     </p>
     <button class="btn-ig btn mt-2 d-flex align-items-center gap-2"
             data-bs-toggle="offcanvas" data-bs-target="#runPanel">
@@ -168,54 +178,114 @@
   </div>
 {% endif %}
 
-
-<!-- ── Run Panel (Offcanvas) ── -->
 <div class="offcanvas offcanvas-end" tabindex="-1" id="runPanel"
-     style="width:420px;background:var(--surface);border-left:1px solid var(--border);color:var(--text)">
+     style="width:460px;background:var(--surface);border-left:1px solid var(--border);color:var(--text)">
   <div class="offcanvas-header" style="border-bottom:1px solid var(--border)">
     <h5 class="offcanvas-title fw-bold">
-      <i class="bi bi-play-circle-fill me-2" style="color:var(--ig-pink)"></i>Nuevo Scraping
+      <i class="bi bi-play-circle-fill me-2" style="color:var(--ig-pink)"></i>Scraping y Programador
     </h5>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
   <div class="offcanvas-body">
     <p class="small mb-3" style="color:var(--muted)">
-      Ingresa una o varias fuentes de Instagram y la cantidad exacta de posts nuevos a extraer.
-      Los repetidos se saltan y el scraper sigue avanzando hasta completar el objetivo, si hay suficientes posts nuevos visibles.
+      Define una cuota por fuente. El scraper termina una fuente y luego pasa a la siguiente.
+      Los posts repetidos no consumen cupo: los salta con el mensaje <code>post saltado existe</code> y sigue avanzando hasta reunir los nuevos reales de cada cuenta.
     </p>
 
     <div class="mb-3">
-      <label class="form-label small fw-semibold">Fuentes de Instagram</label>
-      <textarea id="profileUrls" class="form-control form-control-dark" rows="5"
-                placeholder="https://www.instagram.com/biobiochile/
-https://www.instagram.com/cnnchile/
-@latercera"></textarea>
+      <label class="form-label small fw-semibold">Fuentes y cupos</label>
+      <textarea id="profileSpecs" class="form-control form-control-dark" rows="7"
+                placeholder="@biobiochile=30&#10;@cnnchile=50&#10;@latercera=20">{% for job in scheduler.config.source_jobs %}{{ job.profile_url }}={{ job.limit }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
       <div class="form-text" style="color:var(--muted)">
-        Una fuente por línea. También puedes usar usuario simple o separar por coma.
-      </div>
-    </div>
-    <div class="mb-3">
-      <label class="form-label small fw-semibold">Cantidad de posts nuevos</label>
-      <input type="number" id="limitInput" class="form-control form-control-dark"
-             min="1" max="{{ max_limit }}" value="5" placeholder="5" />
-      <div class="form-text" style="color:var(--muted)">
-        Máximo {{ max_limit }} por corrida.
+        Una fuente por línea. Formato recomendado: <code>@usuario=30</code>. Si una línea no trae cuota, usa el límite por defecto.
       </div>
     </div>
 
-    <button class="btn-ig btn w-100 mb-3 d-flex align-items-center justify-content-center gap-2"
-            id="runBtn">
-      <i class="bi bi-play-circle-fill"></i> Ejecutar
-    </button>
+    <div class="row g-3 mb-3">
+      <div class="col-6">
+        <label class="form-label small fw-semibold">Límite por defecto</label>
+        <input type="number" id="defaultLimitInput" class="form-control form-control-dark"
+               min="1" max="{{ max_limit }}" value="{{ scheduler.config.default_limit or 5 }}" />
+      </div>
+      <div class="col-6">
+        <label class="form-label small fw-semibold">Cada N minutos</label>
+        <input type="number" id="intervalInput" class="form-control form-control-dark"
+               min="1" value="{{ scheduler.config.interval_minutes or 15 }}" />
+      </div>
+    </div>
 
-    <!-- Log output -->
-    <div class="run-log" id="runLog" style="display:none"></div>
+    <div class="card-dark mb-3">
+      <div class="card-body">
+        <div class="small fw-semibold mb-2">Filtro histórico opcional</div>
+        <p class="small mb-3" style="color:var(--muted)">
+          Déjalo vacío para trabajar solo con nuevos. Si completas fechas, el scraping manual filtra por fecha real del post antes de descargar.
+          El programador periódico sigue enfocado solo en nuevos.
+        </p>
+        <div class="row g-3">
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Desde fecha</label>
+            <input type="date" id="dateFromInput" class="form-control form-control-dark" max="{{ today_iso }}" />
+            <div class="form-text" style="color:var(--muted)">Ejemplo: desde 2026-03-01 a hoy.</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">Hasta fecha</label>
+            <input type="date" id="dateToInput" class="form-control form-control-dark" max="{{ today_iso }}" />
+            <div class="form-text" style="color:var(--muted)">Ejemplo: hasta 2026-03-01.</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-    <div id="runDone" class="mt-3 text-center" style="display:none">
-      <button class="btn btn-sm" onclick="location.reload()"
-              style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px">
-        <i class="bi bi-arrow-clockwise me-1"></i> Recargar resultados
+    <div class="d-grid gap-2 mb-3">
+      <button class="btn-ig btn d-flex align-items-center justify-content-center gap-2" id="runBtn">
+        <i class="bi bi-play-circle-fill"></i> Ejecutar ahora
       </button>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm flex-fill" id="startSchedulerBtn"
+                style="background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.22);border-radius:8px">
+          <i class="bi bi-clock-history me-1"></i> Iniciar programador
+        </button>
+        <button class="btn btn-sm flex-fill" id="stopSchedulerBtn"
+                style="background:rgba(248,113,113,.10);color:#f87171;border:1px solid rgba(248,113,113,.22);border-radius:8px">
+          <i class="bi bi-stop-circle me-1"></i> Detener
+        </button>
+      </div>
+    </div>
+
+    <div class="card-dark mb-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="small fw-semibold">Estado del programador</div>
+          <button class="btn btn-sm" id="refreshSchedulerBtn"
+                  style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:.72rem">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+        <div id="schedulerStatusText" class="small" style="color:var(--muted)">
+          {% if scheduler.running %}
+            Activo. Próxima revisión: {{ scheduler.status.get('next_run_at', 'pendiente') }}
+          {% else %}
+            Detenido.
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Log de ejecución manual</label>
+      <div class="run-log" id="runLog">{{ manual_log_tail or 'Sin ejecuciones manuales todavía.' }}</div>
+      <div id="runDone" class="mt-3 text-center" style="display:none">
+        <button class="btn btn-sm" onclick="location.reload()"
+                style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px">
+          <i class="bi bi-arrow-clockwise me-1"></i> Recargar resultados
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <label class="form-label small fw-semibold">Log del programador</label>
+      <div class="run-log" id="schedulerLog">{{ scheduler.log_tail or 'Sin ejecuciones programadas todavía.' }}</div>
     </div>
   </div>
 </div>
@@ -223,7 +293,6 @@ https://www.instagram.com/cnnchile/
 
 {% block scripts %}
 <script>
-/* ── Filtros ── */
 document.querySelectorAll('.filter-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.filter-btn').forEach(b => {
@@ -244,49 +313,96 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
   });
 });
 
-/* ── Run Scraper ── */
-const runBtn    = document.getElementById('runBtn');
-const runLog    = document.getElementById('runLog');
-const runDone   = document.getElementById('runDone');
-const profileUrls = document.getElementById('profileUrls');
-const limitInput  = document.getElementById('limitInput');
+const runBtn = document.getElementById('runBtn');
+const runLog = document.getElementById('runLog');
+const runDone = document.getElementById('runDone');
+const profileSpecs = document.getElementById('profileSpecs');
+const defaultLimitInput = document.getElementById('defaultLimitInput');
+const intervalInput = document.getElementById('intervalInput');
+const dateFromInput = document.getElementById('dateFromInput');
+const dateToInput = document.getElementById('dateToInput');
+const startSchedulerBtn = document.getElementById('startSchedulerBtn');
+const stopSchedulerBtn = document.getElementById('stopSchedulerBtn');
+const refreshSchedulerBtn = document.getElementById('refreshSchedulerBtn');
+const schedulerStatusText = document.getElementById('schedulerStatusText');
+const schedulerLog = document.getElementById('schedulerLog');
 
 function appendLog(line) {
   const div = document.createElement('div');
   if (line.includes('[ERROR]') || line.includes('❌')) div.className = 'line-error';
-  else if (line.includes('[WARN]'))  div.className = 'line-warn';
+  else if (line.includes('[WARN]') || line.includes('[SKIP]')) div.className = 'line-warn';
   else if (line.includes('[OK]') || line.includes('✅')) div.className = 'line-ok';
   div.textContent = line;
   runLog.appendChild(div);
   runLog.scrollTop = runLog.scrollHeight;
 }
 
-runBtn.addEventListener('click', async () => {
-  const rawSources = profileUrls.value.trim();
-  if (!rawSources) {
-    profileUrls.focus();
-    showToast('Ingresa al menos una fuente.', 'error');
-    return;
+function buildSharedFormData() {
+  const rawSpecs = profileSpecs.value.trim();
+  if (!rawSpecs) {
+    profileSpecs.focus();
+    throw new Error('Ingresa al menos una fuente con o sin cuota.');
   }
 
-  const limitValue = parseInt(limitInput.value || '5', 10);
-  if (!Number.isFinite(limitValue) || limitValue < 1) {
-    limitInput.focus();
-    showToast('Ingresa una cantidad válida.', 'error');
-    return;
+  const defaultLimitValue = parseInt(defaultLimitInput.value || '5', 10);
+  if (!Number.isFinite(defaultLimitValue) || defaultLimitValue < 1) {
+    defaultLimitInput.focus();
+    throw new Error('Ingresa un límite por defecto válido.');
   }
 
-  runLog.innerHTML = '';
-  runLog.style.display = 'block';
-  runDone.style.display = 'none';
-  runBtn.disabled = true;
-  runBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Ejecutando…';
+  const dateFrom = (dateFromInput.value || '').trim();
+  const dateTo = (dateToInput.value || '').trim();
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    dateFromInput.focus();
+    throw new Error('La fecha desde no puede ser mayor que la fecha hasta.');
+  }
 
   const formData = new FormData();
-  formData.append('profile_urls', rawSources);
-  formData.append('limit', String(limitValue));
+  formData.append('profile_specs', rawSpecs);
+  formData.append('default_limit', String(defaultLimitValue));
+  if (dateFrom) formData.append('date_from', dateFrom);
+  if (dateTo) formData.append('date_to', dateTo);
+  return formData;
+}
 
+async function refreshManualLog() {
   try {
+    const resp = await fetch('/api/manual_log');
+    const data = await resp.json();
+    runLog.textContent = data.log_tail || 'Sin ejecuciones manuales todavía.';
+    runLog.scrollTop = runLog.scrollHeight;
+  } catch (_) {}
+}
+
+async function refreshSchedulerStatus(showSuccessToast = false) {
+  const resp = await fetch('/api/scheduler_status');
+  const data = await resp.json();
+  const running = !!data.running;
+  const status = data.status || {};
+  const config = data.config || {};
+  const nextRun = status.next_run_at || 'pendiente';
+  const interval = config.interval_minutes || '-';
+  const jobs = Array.isArray(config.source_jobs) ? config.source_jobs.length : 0;
+
+  schedulerStatusText.textContent = running
+    ? `Activo. Intervalo: ${interval} min. Fuentes: ${jobs}. Próxima revisión: ${nextRun}`
+    : `Detenido. Intervalo configurado: ${interval} min. Fuentes: ${jobs}.`;
+
+  schedulerLog.textContent = data.log_tail || 'Sin ejecuciones programadas todavía.';
+
+  if (showSuccessToast) {
+    showToast('Estado del programador actualizado.', 'success');
+  }
+}
+
+runBtn.addEventListener('click', async () => {
+  try {
+    const formData = buildSharedFormData();
+    runLog.innerHTML = '';
+    runDone.style.display = 'none';
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Ejecutando…';
+
     const resp = await fetch('/run', { method: 'POST', body: formData });
     if (!resp.ok) {
       let message = 'Error al iniciar el scraping.';
@@ -312,6 +428,7 @@ runBtn.addEventListener('click', async () => {
         if (!line) continue;
         if (line === '__DONE__') {
           runDone.style.display = 'block';
+          await refreshManualLog();
           showToast('Scraping completado.', 'success');
         } else {
           appendLog(line);
@@ -319,11 +436,60 @@ runBtn.addEventListener('click', async () => {
       }
     }
   } catch (err) {
-    appendLog('❌ Error de conexión: ' + err.message);
+    appendLog('❌ Error: ' + err.message);
+    showToast(err.message, 'error');
   } finally {
     runBtn.disabled = false;
-    runBtn.innerHTML = '<i class="bi bi-play-circle-fill"></i> Ejecutar';
+    runBtn.innerHTML = '<i class="bi bi-play-circle-fill"></i> Ejecutar ahora';
   }
+});
+
+startSchedulerBtn.addEventListener('click', async () => {
+  try {
+    const formData = buildSharedFormData();
+    const intervalValue = parseInt(intervalInput.value || '15', 10);
+    if (!Number.isFinite(intervalValue) || intervalValue < 1) {
+      intervalInput.focus();
+      throw new Error('Ingresa un intervalo válido en minutos.');
+    }
+    formData.append('interval_minutes', String(intervalValue));
+
+    startSchedulerBtn.disabled = true;
+    const resp = await fetch('/scheduler/start', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      throw new Error(data.error || data.message || 'No se pudo iniciar el programador.');
+    }
+    showToast(data.message || 'Programador iniciado.', 'success');
+    await refreshSchedulerStatus();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    startSchedulerBtn.disabled = false;
+  }
+});
+
+stopSchedulerBtn.addEventListener('click', async () => {
+  try {
+    stopSchedulerBtn.disabled = true;
+    const resp = await fetch('/scheduler/stop', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      throw new Error(data.error || data.message || 'No se pudo detener el programador.');
+    }
+    showToast(data.message || 'Programador detenido.', 'success');
+    await refreshSchedulerStatus();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    stopSchedulerBtn.disabled = false;
+  }
+});
+
+refreshSchedulerBtn.addEventListener('click', () => refreshSchedulerStatus(true));
+window.addEventListener('load', () => {
+  refreshSchedulerStatus(false);
+  refreshManualLog();
 });
 </script>
 {% endblock %}
