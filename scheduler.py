@@ -29,6 +29,15 @@ def future_iso(minutes: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
 
 
+def interval_config_to_minutes(config: Dict) -> int:
+    unit = str(config.get("interval_unit", "minutes") or "minutes").strip().lower()
+    value = int(config.get("interval_value", config.get("interval_minutes", 15)) or 15)
+    value = max(1, value)
+    if unit == "hours":
+        return value * 60
+    return value
+
+
 def load_json(path: Path, default):
     if not path.exists():
         return default
@@ -44,6 +53,9 @@ def load_config() -> Dict:
         {
             "enabled": False,
             "interval_minutes": 15,
+            "interval_value": 15,
+            "interval_unit": "minutes",
+            "content_mode": "both",
             "source_jobs": [],
             "updated_at": "",
         },
@@ -94,9 +106,8 @@ def source_job_args(source_jobs: List[Dict]) -> List[str]:
     args: List[str] = []
     for job in source_jobs:
         profile_url = str(job.get("profile_url", "")).strip()
-        limit = int(job.get("limit", 0) or 0)
-        if profile_url and limit > 0:
-            args.append(f"{profile_url}={limit}")
+        if profile_url:
+            args.append(profile_url)
     return args
 
 
@@ -112,7 +123,8 @@ def run_cycle(config: Dict) -> int:
         append_log(f"[{utc_now_iso()}] [WARN] Scheduler sin fuentes configuradas.")
         return 0
 
-    cmd = [sys.executable, str(APP_SCRIPT), *jobs]
+    content_mode = str(config.get("content_mode", "both") or "both").strip().lower()
+    cmd = [sys.executable, str(APP_SCRIPT), "--content-mode", content_mode, "--scheduler-all-new", *jobs]
     append_log("=" * 80)
     append_log(f"[{utc_now_iso()}] [INFO] Inicio de ciclo programado")
     append_log(f"[{utc_now_iso()}] [INFO] Comando: {' '.join(cmd)}")
@@ -120,6 +132,7 @@ def run_cycle(config: Dict) -> int:
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     env["SCRAPER_RUN_CONTEXT"] = "scheduler"
+    env["SCRAPER_HEADLESS"] = "1"   # scheduler siempre corre sin ventana
 
     with LOG_FILE.open("a", encoding="utf-8") as fh:
         proc = subprocess.run(
@@ -155,10 +168,12 @@ def main() -> int:
         while not stop_requested:
             config = load_config()
             enabled = bool(config.get("enabled", False))
-            interval_minutes = max(1, int(config.get("interval_minutes", 15) or 15))
+            interval_minutes = max(1, interval_config_to_minutes(config))
+            interval_value = int(config.get("interval_value", config.get("interval_minutes", 15)) or 15)
+            interval_unit = str(config.get("interval_unit", "minutes") or "minutes")
 
             if not enabled:
-                write_status(state="disabled", pid=os.getpid(), interval_minutes=interval_minutes)
+                write_status(state="disabled", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit)
                 append_log(f"[{utc_now_iso()}] [INFO] Scheduler deshabilitado desde configuración. Saliendo.")
                 break
 
@@ -166,6 +181,8 @@ def main() -> int:
                 state="running",
                 pid=os.getpid(),
                 interval_minutes=interval_minutes,
+                interval_value=interval_value,
+                interval_unit=interval_unit,
                 last_run_started_at=utc_now_iso(),
                 next_run_at=future_iso(interval_minutes),
                 source_jobs=config.get("source_jobs", []),
@@ -175,6 +192,8 @@ def main() -> int:
                 state="sleeping",
                 pid=os.getpid(),
                 interval_minutes=interval_minutes,
+                interval_value=interval_value,
+                interval_unit=interval_unit,
                 last_run_finished_at=utc_now_iso(),
                 last_exit_code=exit_code,
                 next_run_at=future_iso(interval_minutes),

@@ -26,14 +26,10 @@ from flask import (
 )
 
 from app import (
-    MAX_LIMIT,
-    DEFAULT_LIMIT,
+    build_content_mode_label,
     build_source_metadata,
-    format_source_job_arg,
-    parse_iso_date,
-    parse_positive_limit,
-    validate_date_range,
-    parse_profile_sources,
+    parse_compact_date,
+    parse_content_mode,
     parse_source_jobs,
 )
 
@@ -56,6 +52,12 @@ app = Flask(__name__)
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def interval_to_minutes(value: int, unit: str) -> int:
+    safe_value = max(1, int(value or 1))
+    safe_unit = (unit or "minutes").strip().lower()
+    return safe_value * 60 if safe_unit == "hours" else safe_value
 
 
 def read_json_file(path: Path, default):
@@ -94,6 +96,16 @@ def load_summary() -> list:
     return []
 
 
+def sort_posts(posts: list) -> list:
+    def sort_key(post: dict):
+        post_date = str(post.get("post_date", "") or "")
+        processed_at = str(post.get("processed_at", "") or "")
+        shortcode = str(post.get("shortcode", "") or "")
+        return (post_date, processed_at, shortcode)
+
+    return sorted(posts, key=sort_key, reverse=True)
+
+
 def load_all_posts() -> list:
     by_code: dict = {p["shortcode"]: p for p in load_summary()}
 
@@ -106,7 +118,37 @@ def load_all_posts() -> list:
         except Exception:
             pass
 
-    return list(by_code.values())
+    return sort_posts(list(by_code.values()))
+
+
+def build_grouped_sources(posts: list) -> list:
+    grouped: dict[str, dict] = {}
+
+    for post in posts:
+        normalized = normalize_post_source(post)
+        source_key = normalized.get("source_label") or normalized.get("source_username") or "@sin_fuente"
+        group = grouped.setdefault(source_key, {
+            "source_key": source_key,
+            "source_label": normalized.get("source_label") or source_key,
+            "source_username": normalized.get("source_username", ""),
+            "profile_url": normalized.get("profile_url", ""),
+            "posts": [],
+        })
+        if normalized.get("profile_url") and not group.get("profile_url"):
+            group["profile_url"] = normalized.get("profile_url")
+        group["posts"].append(normalized)
+
+    groups = []
+    for group in grouped.values():
+        group["posts"] = sort_posts(group["posts"])
+        group["count"] = len(group["posts"])
+        newest = group["posts"][0] if group["posts"] else {}
+        group["latest_post_date"] = newest.get("post_date", "")
+        group["latest_shortcode"] = newest.get("shortcode", "")
+        groups.append(group)
+
+    groups.sort(key=lambda item: (-item["count"], item.get("source_label", "")))
+    return groups
 
 
 def get_post(shortcode: str) -> dict | None:
@@ -120,7 +162,9 @@ def default_scheduler_config() -> dict:
     return {
         "enabled": False,
         "interval_minutes": 15,
-        "default_limit": DEFAULT_LIMIT,
+        "interval_value": 15,
+        "interval_unit": "minutes",
+        "content_mode": "both",
         "source_jobs": [],
         "updated_at": "",
     }
@@ -130,8 +174,14 @@ def load_scheduler_config() -> dict:
     config = read_json_file(SCHEDULER_CONFIG_FILE, default_scheduler_config())
     if "interval_minutes" not in config:
         config["interval_minutes"] = 15
-    if "default_limit" not in config:
-        config["default_limit"] = DEFAULT_LIMIT
+    if "interval_value" not in config:
+        config["interval_value"] = int(config.get("interval_minutes", 15) or 15)
+    if "interval_unit" not in config:
+        config["interval_unit"] = "minutes"
+    if "content_mode" not in config:
+        config["content_mode"] = "both"
+    else:
+        config["content_mode"] = parse_content_mode(config.get("content_mode", "both"))
     if "source_jobs" not in config:
         config["source_jobs"] = []
     if "enabled" not in config:
@@ -143,8 +193,14 @@ def save_scheduler_config(config: dict) -> dict:
     BASE_DIR.mkdir(parents=True, exist_ok=True)
     current = default_scheduler_config()
     current.update(config)
-    current["interval_minutes"] = max(1, int(current.get("interval_minutes", 15) or 15))
-    current["default_limit"] = parse_positive_limit(current.get("default_limit", DEFAULT_LIMIT))
+    interval_value = max(1, int(current.get("interval_value", current.get("interval_minutes", 15)) or 15))
+    interval_unit = str(current.get("interval_unit", "minutes") or "minutes").strip().lower()
+    if interval_unit not in {"minutes", "hours"}:
+        interval_unit = "minutes"
+    current["interval_value"] = interval_value
+    current["interval_unit"] = interval_unit
+    current["interval_minutes"] = interval_to_minutes(interval_value, interval_unit)
+    current["content_mode"] = parse_content_mode(current.get("content_mode", "both"))
     current["updated_at"] = utc_now_iso()
     SCHEDULER_CONFIG_FILE.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
     return current
@@ -204,30 +260,45 @@ def manual_log_tail(max_lines: int = 120) -> str:
     return tail_text_file(MANUAL_LOG_FILE, max_lines=max_lines)
 
 
-def parse_jobs_from_request() -> tuple[list[dict], int, str, str, str]:
+def parse_sources_from_request() -> tuple[list[dict], str]:
     profile_specs_raw = request.form.get("profile_specs", "").strip()
     profile_urls_raw = request.form.get("profile_urls", "").strip()
     profile_url_single = request.form.get("profile_url", "").strip()
-    default_limit = parse_positive_limit(request.form.get("default_limit", DEFAULT_LIMIT), DEFAULT_LIMIT)
 
     raw_combined = profile_specs_raw or "\n".join([profile_urls_raw, profile_url_single]).strip()
-    jobs = parse_source_jobs([raw_combined], default_limit=default_limit)
-    date_from = request.form.get("date_from", "").strip()
-    date_to = request.form.get("date_to", "").strip()
-    if date_from:
-        parse_iso_date(date_from)
-    if date_to:
-        parse_iso_date(date_to)
-    return jobs, default_limit, raw_combined, date_from, date_to
+    parsed_jobs = parse_source_jobs([raw_combined])
+    source_jobs: list[dict] = []
+    for job in parsed_jobs:
+        profile_url = str(job.get("profile_url", "")).strip()
+        if profile_url:
+            source_jobs.append({"profile_url": profile_url})
+    return source_jobs, raw_combined
 
 
-def build_run_command_args(source_jobs: list[dict], date_from: str = "", date_to: str = "") -> list[str]:
-    args: list[str] = []
-    if date_from:
-        args.extend(["--date-from", date_from])
-    if date_to:
-        args.extend(["--date-to", date_to])
-    args.extend(format_source_job_arg(job["profile_url"], int(job["limit"])) for job in source_jobs)
+def parse_manual_run_request() -> tuple[list[dict], str, str, str]:
+    source_jobs, raw_combined = parse_sources_from_request()
+    historical_until = request.form.get("until", "").strip() or request.form.get("since", "").strip()
+    if not historical_until:
+        raise ValueError("Debes indicar una fecha objetivo en formato ddmmaa para ejecutar manualmente.")
+    parse_compact_date(historical_until)
+    content_mode = parse_content_mode(request.form.get("content_mode", "both"))
+    return source_jobs, raw_combined, historical_until, content_mode
+
+
+def parse_scheduler_request() -> tuple[list[dict], str, str]:
+    source_jobs, raw_combined = parse_sources_from_request()
+    content_mode = parse_content_mode(request.form.get("content_mode", "both"))
+    return source_jobs, raw_combined, content_mode
+
+
+def build_run_command_args(source_jobs: list[dict], historical_until: str = "", scheduler_all_new: bool = False, content_mode: str = "both") -> list[str]:
+    args: list[str] = ["--content-mode", parse_content_mode(content_mode)]
+    if scheduler_all_new:
+        args.append("--scheduler-all-new")
+        args.extend(str(job["profile_url"]) for job in source_jobs)
+        return args
+    args.extend(["--until", historical_until])
+    args.extend(str(job["profile_url"]) for job in source_jobs)
     return args
 
 
@@ -247,13 +318,14 @@ def launch_scheduler_process() -> None:
 @app.route("/")
 def index():
     posts = load_all_posts()
+    grouped_sources = build_grouped_sources(posts)
     has_state = Path("ig_state.json").exists()
     scheduler = scheduler_snapshot()
     return render_template(
         "index.html",
         posts=posts,
+        grouped_sources=grouped_sources,
         has_state=has_state,
-        max_limit=MAX_LIMIT,
         scheduler=scheduler,
         manual_log_tail=manual_log_tail(),
         today_iso=datetime.now().date().isoformat(),
@@ -305,22 +377,28 @@ def api_manual_log():
 @app.route("/run", methods=["POST"])
 def run_scraper():
     try:
-        source_jobs, default_limit, raw_combined, date_from, date_to = parse_jobs_from_request()
+        source_jobs, raw_combined, historical_until, content_mode = parse_manual_run_request()
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     if not source_jobs:
         return jsonify({"error": "Debes ingresar al menos una fuente de Instagram."}), 400
 
     def generate():
-        cmd = [sys.executable, str(APP_SCRIPT), *build_run_command_args(source_jobs, date_from=date_from, date_to=date_to)]
+        cmd = [sys.executable, str(APP_SCRIPT), *build_run_command_args(source_jobs, historical_until=historical_until, content_mode=content_mode)]
         yield f"data: ▶ Ejecutando: {' '.join(cmd)}\n\n"
         yield f"data: [INFO] Especificación recibida: {raw_combined}\n\n"
-        yield f"data: [INFO] Límite por defecto para líneas sin cuota: {default_limit}\n\n"
-        yield f"data: [INFO] Fuentes programadas: {source_jobs}\n\n"
-        yield f"data: [INFO] Filtro temporal solicitado: desde={date_from or '-'} hasta={date_to or '-'}\n\n"
+        yield "data: [INFO] Modo manual solicitado: histórico por fecha\n\n"
+        yield f"data: [INFO] Fuentes programadas: {[str(job['profile_url']) for job in source_jobs]}\n\n"
+        yield f"data: [INFO] Filtro temporal solicitado: hasta={historical_until} (ddmmaa, desde hoy hacia atrás)\n\n"
+        yield "data: [INFO] Cuotas por cantidad: desactivadas en modo manual web.\n\n"
+        yield "data: [INFO] Pipeline activo: validar fecha -> descargar y guardar caption -> OCR masivo al final.\n\n"
+        yield f"data: [INFO] Tipo de contenido solicitado: {build_content_mode_label(content_mode)}\n\n"
 
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
+        # Modo manual → browser VISIBLE (sin SCRAPER_HEADLESS)
+        # El scheduler lo lanza con SCRAPER_HEADLESS=1 por separado
+        env.pop("SCRAPER_HEADLESS", None)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -350,18 +428,22 @@ def run_scraper():
 @app.route("/scheduler/start", methods=["POST"])
 def scheduler_start():
     try:
-        source_jobs, default_limit, _, _, _ = parse_jobs_from_request()
+        source_jobs, _, content_mode = parse_scheduler_request()
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     if not source_jobs:
-        return jsonify({"error": "Debes ingresar al menos una fuente con cuota para programar."}), 400
+        return jsonify({"error": "Debes ingresar al menos una fuente para programar."}), 400
 
-    interval_minutes = max(1, int(request.form.get("interval_minutes", 15) or 15))
+    interval_value = max(1, int(request.form.get("interval_value", 15) or 15))
+    interval_unit = str(request.form.get("interval_unit", "minutes") or "minutes").strip().lower()
+    if interval_unit not in {"minutes", "hours"}:
+        interval_unit = "minutes"
     config = save_scheduler_config(
         {
             "enabled": True,
-            "interval_minutes": interval_minutes,
-            "default_limit": default_limit,
+            "interval_value": interval_value,
+            "interval_unit": interval_unit,
+            "content_mode": content_mode,
             "source_jobs": source_jobs,
         }
     )
