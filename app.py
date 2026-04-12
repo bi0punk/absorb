@@ -119,9 +119,16 @@ def append_manual_log(message: str) -> None:
         fh.write(message.rstrip() + "\n")
 
 
+def append_runtime_log(message: str) -> None:
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    with RUNTIME_LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(message.rstrip() + "\n")
+
+
 def log(message: str) -> None:
     print(message)
     append_manual_log(message)
+    append_runtime_log(message)
 
 
 def log_section(title: str) -> None:

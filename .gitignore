@@ -7,7 +7,7 @@ data_instagram/
 debug/
 # C extensions
 *.so
-
+*.json
 # Distribution / packaging
 .Python
 build/
