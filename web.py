@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import sys
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,8 +45,17 @@ SCHEDULER_STATUS_FILE = BASE_DIR / "scheduler_status.json"
 SCHEDULER_PID_FILE = BASE_DIR / "scheduler.pid"
 SCHEDULER_LOG_FILE = BASE_DIR / "scheduler.log"
 MANUAL_LOG_FILE = BASE_DIR / "manual_run.log"
+RUNTIME_LOG_FILE = BASE_DIR / "runtime.log"
+WEB_LOG_FILE = BASE_DIR / "web.log"
 
 app = Flask(__name__)
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == str(WEB_LOG_FILE.resolve()) for h in app.logger.handlers):
+    file_handler = logging.FileHandler(WEB_LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s"))
+    app.logger.addHandler(file_handler)
+app.logger.setLevel(logging.INFO)
 
 
 # ── Utilidades ──────────────────────────────────────────────────────────────────
@@ -68,6 +78,30 @@ def read_json_file(path: Path, default):
     except Exception:
         return default
 
+
+
+
+def parse_daily_times(raw_value) -> list[str]:
+    if isinstance(raw_value, list):
+        values = raw_value
+    else:
+        values = str(raw_value or '').replace('\n', ',').split(',')
+    normalized = []
+    for item in values:
+        token = str(item or '').strip()
+        if not token:
+            continue
+        parts = token.split(':', 1)
+        if len(parts) != 2:
+            continue
+        try:
+            hh = int(parts[0])
+            mm = int(parts[1])
+        except Exception:
+            continue
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            normalized.append(f"{hh:02d}:{mm:02d}")
+    return sorted(set(normalized))
 
 def normalize_post_source(post: dict) -> dict:
     if not isinstance(post, dict):
@@ -161,9 +195,11 @@ def get_post(shortcode: str) -> dict | None:
 def default_scheduler_config() -> dict:
     return {
         "enabled": False,
+        "schedule_mode": "interval",
         "interval_minutes": 15,
         "interval_value": 15,
         "interval_unit": "minutes",
+        "daily_times": ["09:00", "14:00", "20:00"],
         "content_mode": "both",
         "source_jobs": [],
         "updated_at": "",
@@ -172,12 +208,18 @@ def default_scheduler_config() -> dict:
 
 def load_scheduler_config() -> dict:
     config = read_json_file(SCHEDULER_CONFIG_FILE, default_scheduler_config())
+    if "schedule_mode" not in config:
+        config["schedule_mode"] = "interval"
     if "interval_minutes" not in config:
         config["interval_minutes"] = 15
     if "interval_value" not in config:
         config["interval_value"] = int(config.get("interval_minutes", 15) or 15)
     if "interval_unit" not in config:
         config["interval_unit"] = "minutes"
+    if "daily_times" not in config:
+        config["daily_times"] = ["09:00", "14:00", "20:00"]
+    else:
+        config["daily_times"] = parse_daily_times(config.get("daily_times", []))
     if "content_mode" not in config:
         config["content_mode"] = "both"
     else:
@@ -197,9 +239,14 @@ def save_scheduler_config(config: dict) -> dict:
     interval_unit = str(current.get("interval_unit", "minutes") or "minutes").strip().lower()
     if interval_unit not in {"minutes", "hours"}:
         interval_unit = "minutes"
+    schedule_mode = str(current.get("schedule_mode", "interval") or "interval").strip().lower()
+    if schedule_mode not in {"interval", "daily_times"}:
+        schedule_mode = "interval"
+    current["schedule_mode"] = schedule_mode
     current["interval_value"] = interval_value
     current["interval_unit"] = interval_unit
     current["interval_minutes"] = interval_to_minutes(interval_value, interval_unit)
+    current["daily_times"] = parse_daily_times(current.get("daily_times", []))
     current["content_mode"] = parse_content_mode(current.get("content_mode", "both"))
     current["updated_at"] = utc_now_iso()
     SCHEDULER_CONFIG_FILE.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -253,11 +300,17 @@ def scheduler_snapshot() -> dict:
         "config": config,
         "status": status,
         "log_tail": tail_text_file(SCHEDULER_LOG_FILE, max_lines=80),
+        "runtime_log_tail": tail_text_file(RUNTIME_LOG_FILE, max_lines=120),
+        "web_log_tail": tail_text_file(WEB_LOG_FILE, max_lines=80),
     }
 
 
 def manual_log_tail(max_lines: int = 120) -> str:
     return tail_text_file(MANUAL_LOG_FILE, max_lines=max_lines)
+
+
+def runtime_log_tail(max_lines: int = 120) -> str:
+    return tail_text_file(RUNTIME_LOG_FILE, max_lines=max_lines)
 
 
 def parse_sources_from_request() -> tuple[list[dict], str]:
@@ -374,6 +427,11 @@ def api_manual_log():
     return jsonify({"log_tail": manual_log_tail()})
 
 
+@app.route("/api/runtime_log")
+def api_runtime_log():
+    return jsonify({"log_tail": runtime_log_tail(), "web_log_tail": tail_text_file(WEB_LOG_FILE, max_lines=80)})
+
+
 @app.route("/run", methods=["POST"])
 def run_scraper():
     try:
@@ -389,7 +447,10 @@ def run_scraper():
         yield f"data: [INFO] Especificación recibida: {raw_combined}\n\n"
         yield "data: [INFO] Modo manual solicitado: histórico por fecha\n\n"
         yield f"data: [INFO] Fuentes programadas: {[str(job['profile_url']) for job in source_jobs]}\n\n"
-        yield f"data: [INFO] Filtro temporal solicitado: hasta={historical_until} (ddmmaa, desde hoy hacia atrás)\n\n"
+        until_date = parse_compact_date(historical_until)
+        today_iso = datetime.now().date().isoformat()
+        yield f"data: [INFO] Filtro temporal solicitado: hasta={historical_until} (ddmmaa) => {until_date.isoformat()}\n\n"
+        yield f"data: [INFO] Ventana efectiva del barrido: desde={until_date.isoformat()} hasta={today_iso}\n\n"
         yield "data: [INFO] Cuotas por cantidad: desactivadas en modo manual web.\n\n"
         yield "data: [INFO] Pipeline activo: validar fecha -> descargar y guardar caption -> OCR masivo al final.\n\n"
         yield f"data: [INFO] Tipo de contenido solicitado: {build_content_mode_label(content_mode)}\n\n"
@@ -434,15 +495,23 @@ def scheduler_start():
     if not source_jobs:
         return jsonify({"error": "Debes ingresar al menos una fuente para programar."}), 400
 
+    schedule_mode = str(request.form.get("schedule_mode", "interval") or "interval").strip().lower()
+    if schedule_mode not in {"interval", "daily_times"}:
+        schedule_mode = "interval"
     interval_value = max(1, int(request.form.get("interval_value", 15) or 15))
     interval_unit = str(request.form.get("interval_unit", "minutes") or "minutes").strip().lower()
     if interval_unit not in {"minutes", "hours"}:
         interval_unit = "minutes"
+    daily_times = parse_daily_times(request.form.get("daily_times", ""))
+    if schedule_mode == "daily_times" and not daily_times:
+        return jsonify({"error": "Debes indicar al menos un horario HH:MM para el modo programado por horas fijas."}), 400
     config = save_scheduler_config(
         {
             "enabled": True,
+            "schedule_mode": schedule_mode,
             "interval_value": interval_value,
             "interval_unit": interval_unit,
+            "daily_times": daily_times,
             "content_mode": content_mode,
             "source_jobs": source_jobs,
         }
@@ -453,6 +522,7 @@ def scheduler_start():
         message = "Scheduler iniciado."
     else:
         message = "Scheduler ya estaba corriendo. Configuración actualizada."
+    app.logger.info("Scheduler start/update | mode=%s | interval=%s %s | daily_times=%s | content_mode=%s | fuentes=%s", schedule_mode, interval_value, interval_unit, daily_times, content_mode, [str(job['profile_url']) for job in source_jobs])
 
     return jsonify({"ok": True, "message": message, "scheduler": scheduler_snapshot(), "config": config})
 
@@ -474,6 +544,7 @@ def scheduler_stop():
         SCHEDULER_PID_FILE.unlink(missing_ok=True)
         message = "Scheduler ya estaba detenido."
 
+    app.logger.info("Scheduler stop solicitado | message=%s", message)
     return jsonify({"ok": True, "message": message, "scheduler": scheduler_snapshot()})
 
 

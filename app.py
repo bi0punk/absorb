@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -28,8 +29,19 @@ ANALYSIS_SUFFIX = ".analysis.json"
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 200
 MANUAL_LOG_FILE = BASE_DIR / "manual_run.log"
+RUNTIME_LOG_FILE = BASE_DIR / "runtime.log"
+EVENTS_LOG_FILE = BASE_DIR / "events.jsonl"
 SOURCE_STATE_FILE = BASE_DIR / "source_state.json"
 IS_SCHEDULER_RUN = os.environ.get("SCRAPER_RUN_CONTEXT") == "scheduler"
+APP_TZ = ZoneInfo("America/Santiago")
+
+_DELAY_FACTOR_RAW = os.environ.get("SCRAPER_DELAY_FACTOR", "0.7").strip()
+try:
+    DELAY_FACTOR = max(0.15, min(3.0, float(_DELAY_FACTOR_RAW or "0.7")))
+except Exception:
+    DELAY_FACTOR = 0.7
+
+BEHAVIOR_PROFILE = os.environ.get("SCRAPER_BEHAVIOR_PROFILE", "balanced").strip().lower() or "balanced"
 
 # ── Visión en tiempo real del browser ─────────────────────────────────────────
 # SCRAPER_HEADLESS=1  → browser invisible (scheduler / CI)
@@ -124,6 +136,113 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def local_today() -> date:
+    return datetime.now(APP_TZ).date()
+
+
+def build_effective_date_bounds(date_from: Optional[date], date_to: Optional[date]) -> Tuple[Optional[date], Optional[date]]:
+    lower = date_from
+    upper = date_to
+    if lower and not upper:
+        upper = local_today()
+    return lower, upper
+
+
+def format_post_date_log(post_date_value: Optional[date], date_from: Optional[date], date_to: Optional[date]) -> str:
+    lower, upper = build_effective_date_bounds(date_from, date_to)
+    within = match_post_date(post_date_value, date_from, date_to) if post_date_value else False
+    parts = [
+        f"fecha_post={post_date_value.isoformat() if post_date_value else 'desconocida'}",
+        f"límite_desde={lower.isoformat() if lower else '-'}",
+        f"límite_hasta={upper.isoformat() if upper else '-'}",
+        f"en_rango={'sí' if within else 'no'}",
+    ]
+    return ' | '.join(parts)
+
+
+def existing_post_label(payload: Dict, shortcode: str) -> str:
+    image_path = str(payload.get('image_path', '') or '').strip()
+    post_dir = str(payload.get('post_dir', '') or '').strip()
+    processed_at = str(payload.get('processed_at', '') or '').strip()
+    return (
+        f"shortcode={shortcode}"
+        f" | imagen={'sí' if image_path else 'no'}"
+        f" | directorio={'sí' if post_dir else 'no'}"
+        f" | ocr={'sí' if processed_at or str(payload.get('ocr_best', '') or '').strip() else 'no'}"
+    )
+
+
+def recover_existing_payload(
+    shortcode: str,
+    kind: str,
+    profile_url: str = '',
+    post_datetime: str = '',
+    post_date: str = '',
+) -> Optional[Tuple[str, Dict]]:
+    cached_payload = find_cached_payload(shortcode)
+    if cached_payload:
+        return 'processed_cache', cached_payload
+
+    downloaded_payload = find_downloaded_payload(shortcode)
+    if downloaded_payload:
+        return 'downloaded_cache', downloaded_payload
+
+    post_dir = locate_post_dir(shortcode)
+    if not post_dir:
+        return None
+
+    image_path = find_latest_image(post_dir)
+    if not image_path:
+        return None
+
+    analysis_path = post_dir / f"{shortcode}{ANALYSIS_SUFFIX}"
+    payload = read_json_file(analysis_path) if analysis_path.exists() else None
+    caption = read_caption_for_image(image_path)
+
+    if not isinstance(payload, dict):
+        payload = build_download_payload(
+            kind=kind,
+            shortcode=shortcode,
+            profile_url=profile_url,
+            post_datetime=post_datetime,
+            post_date=post_date,
+            post_dir=post_dir,
+            image_path=image_path,
+            caption=caption,
+        )
+        write_analysis_payload(post_dir, shortcode, payload)
+    else:
+        payload = dict(payload)
+        payload.setdefault('kind', kind)
+        payload.setdefault('shortcode', shortcode)
+        payload.setdefault('profile_url', build_source_metadata(profile_url).get('profile_url', ''))
+        payload.setdefault('post_url', build_post_url(kind, shortcode))
+        payload['post_dir'] = str(post_dir)
+        payload['image_path'] = str(image_path)
+        if caption and not str(payload.get('caption', '') or '').strip():
+            payload['caption'] = caption
+        payload.setdefault('ocr_best', '')
+        payload.setdefault('merged_text', str(payload.get('caption', '') or '').strip())
+        payload.setdefault('processed_at', '')
+        payload.setdefault('post_datetime', post_datetime)
+        payload.setdefault('post_date', post_date)
+
+    processed = bool(str(payload.get('ocr_best', '') or '').strip() or str(payload.get('processed_at', '') or '').strip())
+    out_json = write_analysis_payload(post_dir, shortcode, payload)
+    upsert_registry_record(
+        shortcode=shortcode,
+        kind=str(payload.get('kind', '') or kind),
+        profile_url=str(payload.get('profile_url', '') or profile_url),
+        post_url=str(payload.get('post_url', '') or build_post_url(kind, shortcode)),
+        post_dir=str(post_dir),
+        analysis_json_path=str(out_json),
+        image_path=str(image_path),
+        status='processed' if processed else 'downloaded',
+        processed_at=str(payload.get('processed_at', '') or ''),
+    )
+    return ('processed_disk' if processed else 'downloaded_disk', payload)
+
+
 def save_live_screenshot(page, label: str = "", scroll_idx: int = 0, extra: str = "") -> None:
     """
     Guarda un screenshot en LIVE_SCREENSHOT_DIR junto a un status.json.
@@ -156,15 +275,24 @@ def reset_manual_log() -> None:
         return
     BASE_DIR.mkdir(parents=True, exist_ok=True)
     MANUAL_LOG_FILE.write_text("", encoding="utf-8")
+    append_runtime_log(f"[{utc_now_iso()}] [INFO] Reinicio de log manual")
 
 
 # ── Utilidades de tiempo ──────────────────────────────────────────────────────
 
 def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
-    """Espera un tiempo aleatorio dentro del rango dado y logea el motivo."""
-    wait = round(random.uniform(min_sec, max_sec), 2)
+    """Espera un tiempo aleatorio dentro del rango dado, con perfil de pacing configurable."""
+    local_min = max(0.05, float(min_sec) * DELAY_FACTOR)
+    local_max = max(local_min, float(max_sec) * DELAY_FACTOR)
+    if BEHAVIOR_PROFILE == "conservative":
+        local_min *= 1.2
+        local_max *= 1.3
+    elif BEHAVIOR_PROFILE == "fast":
+        local_min *= 0.7
+        local_max *= 0.7
+    wait = round(random.uniform(local_min, local_max), 2)
     if label:
-        log(f"[WAIT] {_ts()} ⏳ {label} ({wait}s)")
+        log(f"[WAIT] {_ts()} ⏳ {label} ({wait}s | perfil={BEHAVIOR_PROFILE} | factor={DELAY_FACTOR})")
     time.sleep(wait)
     return wait
 
@@ -424,7 +552,7 @@ def build_mode_label(date_from: Optional[date], date_to: Optional[date]) -> str:
     if date_from and date_to:
         return f"entre {date_from.isoformat()} y {date_to.isoformat()}"
     if date_from:
-        return f"desde hoy hasta {date_from.isoformat()}"
+        return f"desde {local_today().isoformat()} hasta {date_from.isoformat()}"
     if date_to:
         return f"hasta {date_to.isoformat()}"
     return "solo nuevos"
@@ -451,15 +579,67 @@ def fetch_post_datetime(context, kind: str, shortcode: str) -> Optional[str]:
     log(f"[FETCH] {_ts()} 🕐 Consultando fecha de post {kind}:{shortcode} → {post_url}")
     page = context.new_page()
     try:
-        page.goto(post_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_selector("time[datetime]", timeout=12000)
-        iso_value = page.locator("time[datetime]").first.get_attribute("datetime")
-        result = (iso_value or "").strip() or None
-        if result:
-            log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result}")
+        response = None
+        try:
+            response = page.goto(post_url, wait_until="commit", timeout=60000)
+        except Exception as nav_exc:
+            log(f"[WARN] {_ts()} Navegación inicial con error en {kind}:{shortcode} → {nav_exc}")
+        status = None
+        try:
+            if response is not None:
+                status = response.status
+        except Exception:
+            status = None
+        if status is not None:
+            log(f"[FETCH] {_ts()} 🌐 Respuesta HTTP {kind}:{shortcode} → status={status}")
+
+        selectors = [
+            'time[datetime]',
+            'meta[property="article:published_time"]',
+            'meta[property="og:published_time"]',
+        ]
+
+        for selector in selectors:
+            try:
+                page.wait_for_selector(selector, timeout=8000)
+                if selector == 'time[datetime]':
+                    value = page.locator(selector).first.get_attribute('datetime')
+                else:
+                    value = page.locator(selector).first.get_attribute('content')
+                result = (value or '').strip() or None
+                if result:
+                    log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result} | selector={selector}")
+                    return result
+            except Exception:
+                pass
+
+        try:
+            html = page.content()
+        except Exception:
+            html = ''
+
+        html_match = None
+        if html:
+            import re as _re
+            html_match = (
+                _re.search(r'"uploadDate"\s*:\s*"([^"]+)"', html)
+                or _re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
+                or _re.search(r'"taken_at"\s*:\s*(\d{10})', html)
+            )
+        if html_match:
+            raw = html_match.group(1)
+            if raw.isdigit() and len(raw) == 10:
+                result = datetime.fromtimestamp(int(raw), tz=timezone.utc).isoformat()
+            else:
+                result = raw
+            log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result} | selector=html-fallback")
+            return result
+
+        if status is not None and status >= 400:
+            log(f"[WARN] {_ts()} Instagram respondió HTTP {status} para {kind}:{shortcode}. No fue posible validar fecha desde el permalink.")
         else:
             log(f"[FETCH] {_ts()} ⚠ Sin fecha encontrada para {kind}:{shortcode}")
-        return result
+        return None
     except Exception as exc:
         log(f"[WARN] {_ts()} No se pudo leer fecha para {kind}:{shortcode} → {exc}")
         return None
@@ -701,6 +881,18 @@ def read_json_file(path: Path):
         return None
 
 
+def infer_payload_status(payload: Optional[Dict]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    has_ocr = bool(str(payload.get("ocr_best", "") or "").strip() or str(payload.get("processed_at", "") or "").strip())
+    if has_ocr:
+        return "processed"
+    image_path = Path(str(payload.get("image_path", "") or ""))
+    if image_path.exists():
+        return "downloaded"
+    return ""
+
+
 def find_analysis_path(shortcode: str, statuses: Optional[Iterable[str]] = None) -> Optional[Path]:
     registry_row = None
     try:
@@ -745,8 +937,13 @@ def find_analysis_path(shortcode: str, statuses: Optional[Iterable[str]] = None)
                 return path
 
     for candidate in BASE_DIR.rglob(f"{shortcode}{ANALYSIS_SUFFIX}"):
-        if candidate.is_file():
-            return candidate
+        if not candidate.is_file():
+            continue
+        if statuses:
+            payload = read_json_file(candidate)
+            if infer_payload_status(payload) not in set(statuses):
+                continue
+        return candidate
 
     return None
 
@@ -1053,7 +1250,9 @@ def extract_shortcodes_from_profile(
     log(f"[SOURCE] {_ts()} 🧩 Tipo de contenido: {build_content_mode_label(content_mode)}")
     log(f"[SOURCE] {_ts()} 📜 Scrolls máximos: {max_scrolls}")
     if date_from or date_to:
+        lower, upper = build_effective_date_bounds(date_from, date_to)
         log(f"[SOURCE] {_ts()} 📅 Filtro temporal: {build_mode_label(date_from, date_to)}")
+        log(f"[SOURCE] {_ts()} 📅 Ventana efectiva: desde={lower.isoformat() if lower else '-'} | hasta={upper.isoformat() if upper else '-'} | hoy={local_today().isoformat()}")
     if stop_at_shortcode:
         log(f"[SOURCE] {_ts()} 🔖 Corte por slug conocido: {stop_at_shortcode}")
     if blocked:
@@ -1183,25 +1382,32 @@ def extract_shortcodes_from_profile(
                     post_date_value = parse_post_date_from_iso(post_datetime)
                     item["post_datetime"] = post_datetime or ""
                     item["post_date"] = post_date_value.isoformat() if post_date_value else ""
+                    log(f"[DATE] {_ts()} 🧾 Fecha post: {format_post_date_log(post_date_value, date_from, date_to)} | {kind}:{shortcode}")
 
                     if item["post_date"] and item["post_date"] != last_logged_scan_date:
                         last_logged_scan_date = item["post_date"]
                         log(f"[DATE] {_ts()} 🗓 Scrapeando fecha {item['post_date']} en {source_label}…")
 
-                    if should_stop_after_candidate(post_date_value, date_from):
-                        stop_due_to_date = True
+                    if not post_date_value:
                         log(
-                            f"[STOP] {_ts()} 📅 Límite histórico alcanzado → {kind}:{shortcode} "
-                            f"({item['post_date'] or 'sin fecha'}) anterior a {date_from}."
+                            f"[WARN] {_ts()} ⚠ Fecha no verificable para {kind}:{shortcode}. "
+                            f"No se marcará como fuera de rango; se mantiene elegible y no activa corte por fecha."
                         )
-                        break
+                    else:
+                        if should_stop_after_candidate(post_date_value, date_from):
+                            stop_due_to_date = True
+                            log(
+                                f"[STOP] {_ts()} 📅 Límite histórico alcanzado → {kind}:{shortcode} "
+                                f"| {format_post_date_log(post_date_value, date_from, date_to)}"
+                            )
+                            break
 
-                    if not match_post_date(post_date_value, date_from, date_to):
-                        log(
-                            f"[SKIP] {_ts()} 📅 Post fuera de rango de fechas → {kind}:{shortcode} "
-                            f"(fecha={item['post_date'] or 'desconocida'})"
-                        )
-                        continue
+                        if not match_post_date(post_date_value, date_from, date_to):
+                            log(
+                                f"[SKIP] {_ts()} 📅 Post fuera de rango de fechas → {kind}:{shortcode} "
+                                f"| {format_post_date_log(post_date_value, date_from, date_to)}"
+                            )
+                            continue
 
                 candidates.append(item)
                 added_this_scroll += 1
@@ -1640,32 +1846,37 @@ def process_source(
             log(f"[SKIP] {_ts()} ♻ Ya visto en esta ejecución → {kind}:{shortcode}")
             return False
 
-        cached_payload = find_cached_payload(shortcode)
-        if cached_payload:
+        existing_payload_info = recover_existing_payload(
+            shortcode=shortcode,
+            kind=kind,
+            profile_url=profile_url,
+            post_datetime=item.get("post_datetime", ""),
+            post_date=item.get("post_date", ""),
+        )
+        if not existing_payload_info:
+            registry_payload = find_payload(shortcode, statuses=["processed", "downloaded"])
+            if registry_payload:
+                existing_payload_info = ("registry_status", registry_payload)
+        if existing_payload_info:
+            existing_state, existing_payload = existing_payload_info
             acquired_shortcodes.add(shortcode)
-            results.append(cached_payload)
-            upsert_registry_record(
-                shortcode=shortcode,
-                kind=kind,
-                profile_url=str(cached_payload.get("profile_url", "") or profile_url),
-                post_url=cached_payload.get("post_url", ""),
-                post_dir=str(locate_post_dir(shortcode) or expected_post_dir(shortcode, profile_url=profile_url)),
-                analysis_json_path=str(find_analysis_path(shortcode, statuses=("processed",)) or expected_analysis_path(shortcode, profile_url=profile_url)),
-                image_path=cached_payload.get("image_path", ""),
-                status="processed",
-                processed_at=str(cached_payload.get("processed_at", "") or ""),
-            )
-            stats["already_processed"] += 1
-            log(f"[SKIP] {_ts()} 📂 Caché OCR disponible, reutilizando → {kind}:{shortcode}")
-            return True
 
-        downloaded_payload = find_downloaded_payload(shortcode)
-        if downloaded_payload and not str(downloaded_payload.get("ocr_best", "") or "").strip():
-            acquired_shortcodes.add(shortcode)
-            pending_ocr.append(downloaded_payload)
-            results.append(downloaded_payload)
+            if existing_state in {"processed_cache", "processed_disk"}:
+                results.append(existing_payload)
+                stats["already_processed"] += 1
+                log(
+                    f"[SKIP] {_ts()} ⏭ Post ya existe, se omite descarga y OCR → {kind}:{shortcode} "
+                    f"| origen={existing_state} | {existing_post_label(existing_payload, shortcode)}"
+                )
+                return True
+
+            pending_ocr.append(existing_payload)
+            results.append(existing_payload)
             stats["queued_existing"] += 1
-            log(f"[QUEUE] {_ts()} ♻ Descarga previa detectada, se agenda OCR posterior → {kind}:{shortcode}")
+            log(
+                f"[SKIP] {_ts()} ⏭ Post ya existe, se omite descarga y se reutiliza para OCR → {kind}:{shortcode} "
+                f"| origen={existing_state} | {existing_post_label(existing_payload, shortcode)}"
+            )
             return True
 
         try:
@@ -1729,6 +1940,11 @@ def process_source(
     ]
     if detected:
         log(f"[SOURCE] {_ts()} 📋 Candidatos válidos detectados y manejados en línea en {source_label}: {detected}")
+    if extraction.get("stop_due_to_date"):
+        if source_index and source_total and source_index < source_total:
+            log(f"[SOURCE] {_ts()} 🔁 Fecha límite alcanzada en {source_label}. Se pasa automáticamente a la siguiente fuente ({source_index + 1}/{source_total}).")
+        else:
+            log(f"[SOURCE] {_ts()} 🏁 Fecha límite alcanzada en {source_label}. No quedan más fuentes por procesar.")
     log(
         f"[SOURCE] {_ts()} 📦 Resumen manejo inmediato en {source_label}: "
         f"descargados={stats['downloaded']} | reutilizados-descargados={stats['queued_existing']} | "
@@ -1779,9 +1995,13 @@ def run_scrape_jobs(
     run_prefix = "programada" if IS_SCHEDULER_RUN else "manual"
     log_section(f"INICIO DE EJECUCIÓN {run_prefix.upper()} — {utc_now_iso()}")
     log(f"[RUN] {_ts()} 🗓 Modo temporal: {build_mode_label(date_from, date_to)}")
+    if date_from or date_to:
+        lower, upper = build_effective_date_bounds(date_from, date_to)
+        log(f"[RUN] {_ts()} 📅 Ventana temporal efectiva: desde={lower.isoformat() if lower else '-'} | hasta={upper.isoformat() if upper else '-'} | hoy={local_today().isoformat()}")
     log(f"[RUN] {_ts()} 🧩 Tipo de contenido: {build_content_mode_label(content_mode)}")
     log(f"[RUN] {_ts()} 📡 Fuentes recibidas: {len(source_jobs)}")
     log(f"[RUN] {_ts()} 🪜 Pipeline: validación de fecha → descarga/caption por fuente → OCR masivo al final")
+    log(f"[RUN] {_ts()} ⚙ Pacing activo: perfil={BEHAVIOR_PROFILE} | factor={DELAY_FACTOR} | browser_headless={BROWSER_HEADLESS}")
     for i, job in enumerate(source_jobs, 1):
         log(f"[RUN] {_ts()}   {i}. {build_source_execution_label(job, collect_all_by_date=collect_all_by_date, scheduler_all_new=scheduler_all_new)}")
     if scheduler_all_new:

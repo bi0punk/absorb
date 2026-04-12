@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, List
 
@@ -17,6 +18,7 @@ STATUS_FILE = BASE_DIR / "scheduler_status.json"
 PID_FILE = BASE_DIR / "scheduler.pid"
 LOG_FILE = BASE_DIR / "scheduler.log"
 APP_SCRIPT = Path(__file__).with_name("app.py")
+APP_TZ = ZoneInfo("America/Santiago")
 
 stop_requested = False
 
@@ -38,6 +40,65 @@ def interval_config_to_minutes(config: Dict) -> int:
     return value
 
 
+
+
+def parse_daily_times(raw_values) -> list[str]:
+    values = raw_values or []
+    if isinstance(values, str):
+        values = [part.strip() for part in values.split(',') if part.strip()]
+    normalized = []
+    for raw in values:
+        token = str(raw or '').strip()
+        if not token:
+            continue
+        parts = token.split(':', 1)
+        if len(parts) != 2:
+            continue
+        try:
+            hh = int(parts[0])
+            mm = int(parts[1])
+        except Exception:
+            continue
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            normalized.append(f"{hh:02d}:{mm:02d}")
+    return sorted(set(normalized))
+
+
+def now_local() -> datetime:
+    return datetime.now(APP_TZ)
+
+
+def future_iso_from_dt(dt_obj: datetime) -> str:
+    return dt_obj.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def next_daily_run_at(daily_times: list[str]) -> datetime:
+    times = parse_daily_times(daily_times)
+    current = now_local()
+    today = current.date()
+    candidates = []
+    for token in times:
+        hh, mm = map(int, token.split(':'))
+        candidates.append(datetime(today.year, today.month, today.day, hh, mm, tzinfo=APP_TZ))
+    future_candidates = [dt for dt in candidates if dt > current]
+    if future_candidates:
+        return min(future_candidates)
+    first_hh, first_mm = map(int, times[0].split(':'))
+    tomorrow = today + timedelta(days=1)
+    return datetime(tomorrow.year, tomorrow.month, tomorrow.day, first_hh, first_mm, tzinfo=APP_TZ)
+
+
+def wait_until(target_dt: datetime) -> bool:
+    while not stop_requested:
+        remaining = (target_dt - now_local()).total_seconds()
+        if remaining <= 0:
+            return True
+        time.sleep(min(1.0, max(0.1, remaining)))
+        config = load_config()
+        if not bool(config.get('enabled', False)):
+            return False
+    return False
+
 def load_json(path: Path, default):
     if not path.exists():
         return default
@@ -52,9 +113,11 @@ def load_config() -> Dict:
         CONFIG_FILE,
         {
             "enabled": False,
+            "schedule_mode": "interval",
             "interval_minutes": 15,
             "interval_value": 15,
             "interval_unit": "minutes",
+            "daily_times": [],
             "content_mode": "both",
             "source_jobs": [],
             "updated_at": "",
@@ -168,37 +231,39 @@ def main() -> int:
         while not stop_requested:
             config = load_config()
             enabled = bool(config.get("enabled", False))
+            schedule_mode = str(config.get("schedule_mode", "interval") or "interval").strip().lower()
             interval_minutes = max(1, interval_config_to_minutes(config))
             interval_value = int(config.get("interval_value", config.get("interval_minutes", 15)) or 15)
             interval_unit = str(config.get("interval_unit", "minutes") or "minutes")
+            daily_times = parse_daily_times(config.get("daily_times", []))
 
             if not enabled:
-                write_status(state="disabled", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit)
+                write_status(state="disabled", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit, schedule_mode=schedule_mode, daily_times=daily_times)
                 append_log(f"[{utc_now_iso()}] [INFO] Scheduler deshabilitado desde configuración. Saliendo.")
                 break
 
-            write_status(
-                state="running",
-                pid=os.getpid(),
-                interval_minutes=interval_minutes,
-                interval_value=interval_value,
-                interval_unit=interval_unit,
-                last_run_started_at=utc_now_iso(),
-                next_run_at=future_iso(interval_minutes),
-                source_jobs=config.get("source_jobs", []),
-            )
+            if schedule_mode == 'daily_times' and daily_times:
+                next_run_dt = next_daily_run_at(daily_times)
+                write_status(state="waiting", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit, schedule_mode=schedule_mode, daily_times=daily_times, next_run_at=future_iso_from_dt(next_run_dt), source_jobs=config.get("source_jobs", []))
+                append_log(f"[{utc_now_iso()}] [INFO] Scheduler en modo horario fijo. Próxima ejecución local={next_run_dt.isoformat()}")
+                if not wait_until(next_run_dt):
+                    stop_requested = True
+                    break
+            else:
+                write_status(state="running", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit, schedule_mode='interval', daily_times=daily_times, last_run_started_at=utc_now_iso(), next_run_at=future_iso(interval_minutes), source_jobs=config.get("source_jobs", []))
+
+            write_status(state="running", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit, schedule_mode=schedule_mode, daily_times=daily_times, last_run_started_at=utc_now_iso(), source_jobs=config.get("source_jobs", []))
             exit_code = run_cycle(config)
-            write_status(
-                state="sleeping",
-                pid=os.getpid(),
-                interval_minutes=interval_minutes,
-                interval_value=interval_value,
-                interval_unit=interval_unit,
-                last_run_finished_at=utc_now_iso(),
-                last_exit_code=exit_code,
-                next_run_at=future_iso(interval_minutes),
-                source_jobs=config.get("source_jobs", []),
-            )
+
+            if schedule_mode == 'daily_times' and daily_times:
+                next_run_at = future_iso_from_dt(next_daily_run_at(daily_times))
+            else:
+                next_run_at = future_iso(interval_minutes)
+
+            write_status(state="sleeping", pid=os.getpid(), interval_minutes=interval_minutes, interval_value=interval_value, interval_unit=interval_unit, schedule_mode=schedule_mode, daily_times=daily_times, last_run_finished_at=utc_now_iso(), last_exit_code=exit_code, next_run_at=next_run_at, source_jobs=config.get("source_jobs", []))
+
+            if schedule_mode == 'daily_times' and daily_times:
+                continue
 
             sleep_seconds = interval_minutes * 60
             for _ in range(sleep_seconds):
