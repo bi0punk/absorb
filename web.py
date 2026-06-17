@@ -345,12 +345,15 @@ def parse_scheduler_request() -> tuple[list[dict], str, str]:
 
 
 def build_run_command_args(source_jobs: list[dict], historical_until: str = "", scheduler_all_new: bool = False, content_mode: str = "both") -> list[str]:
+    """Construye argumentos CLI para app.py. Siempre requiere --until."""
     args: list[str] = ["--content-mode", parse_content_mode(content_mode)]
     if scheduler_all_new:
-        args.append("--scheduler-all-new")
-        args.extend(str(job["profile_url"]) for job in source_jobs)
-        return args
-    args.extend(["--until", historical_until])
+        # En modo scheduler, scrapeamos desde hoy hasta hoy (solo últimas 24h)
+        from datetime import datetime as _dt
+        today_ddmmaa = _dt.now().strftime("%d%m%y")
+        args.extend(["--until", today_ddmmaa])
+    else:
+        args.extend(["--until", historical_until])
     args.extend(str(job["profile_url"]) for job in source_jobs)
     return args
 

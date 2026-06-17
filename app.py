@@ -1191,7 +1191,351 @@ def estimate_max_scrolls(target_new_count: Optional[int], collect_all: bool = Fa
     return min(120, max(12, target * 4))
 
 
-# ── Extracción de shortcodes del perfil ──────────────────────────────────────
+# ── Navegación por flecha entre posts del perfil ─────────────────────────────
+
+# Etiquetas aria del botón "siguiente post" (varía por idioma de Instagram)
+_NEXT_POST_ARIA_LABELS = [
+    "Ir a la publicación siguiente",
+    "Siguiente publicación",
+    "Go to next post",
+    "Next post",
+    "Next",
+    "Siguiente",
+]
+
+
+def click_next_post_arrow(page, current_shortcode: str) -> bool:
+    """
+    Hace clic en la flecha de Instagram para pasar al siguiente post del perfil.
+    Verifica que el shortcode en la URL cambie (confirmando navegación real).
+    Retorna True si la navegación fue exitosa, False si ya no hay más posts.
+    """
+    # Intento 1: botones con aria-label conocido (el ÚLTIMO evita las flechas internas del carrusel)
+    for label in _NEXT_POST_ARIA_LABELS:
+        try:
+            buttons = page.locator(f'button[aria-label="{label}"]').all()
+            if not buttons:
+                continue
+            # El último botón con este label suele ser el de navegación entre posts,
+            # no el de navegación dentro del carrusel (que aparece primero en el DOM)
+            last_btn = buttons[-1]
+            if last_btn.is_visible(timeout=2000):
+                last_btn.click(timeout=3000)
+                time.sleep(1.4)
+                new_url = page.url
+                m = re.search(r"/(p|reel)/([A-Za-z0-9_-]+)/", new_url)
+                if m and m.group(2) != current_shortcode:
+                    log(f"[NAV] {_ts()} ➡ Flecha OK: {current_shortcode} → {m.group(2)} (aria={label!r})")
+                    return True
+        except Exception:
+            pass
+
+    # Intento 2: tecla ArrowRight (Instagram lo soporta cuando el modal tiene foco)
+    try:
+        page.keyboard.press("ArrowRight")
+        time.sleep(1.6)
+        new_url = page.url
+        m = re.search(r"/(p|reel)/([A-Za-z0-9_-]+)/", new_url)
+        if m and m.group(2) != current_shortcode:
+            log(f"[NAV] {_ts()} ➡ Flecha OK via teclado: {current_shortcode} → {m.group(2)}")
+            return True
+    except Exception:
+        pass
+
+    # Intento 3: buscar cualquier botón SVG en el borde derecho del dialog
+    try:
+        dialog_buttons = page.locator("[role='dialog'] > div > button, [role='dialog'] > button").all()
+        for btn in reversed(dialog_buttons):
+            try:
+                if btn.is_visible(timeout=800):
+                    btn.click(timeout=2000)
+                    time.sleep(1.4)
+                    new_url = page.url
+                    m = re.search(r"/(p|reel)/([A-Za-z0-9_-]+)/", new_url)
+                    if m and m.group(2) != current_shortcode:
+                        log(f"[NAV] {_ts()} ➡ Flecha OK via button genérico: {current_shortcode} → {m.group(2)}")
+                        return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    log(f"[NAV] {_ts()} ⛔ Sin flecha disponible para avanzar desde {current_shortcode}")
+    return False
+
+
+def detect_carousel_from_modal(page) -> Tuple[bool, int]:
+    """
+    Detecta si el post abierto en el modal es un carrusel y cuántas imágenes tiene.
+    Retorna (is_carousel: bool, image_count: int).
+    """
+    # Método 1: buscar el patrón "X/N" en spans del diálogo (ej: "1/5")
+    try:
+        dialog = page.locator("[role='dialog']")
+        spans = dialog.locator("span").all()
+        for span in spans[:80]:
+            try:
+                text = (span.text_content() or "").strip()
+                m = re.fullmatch(r"(\d+)/(\d+)", text)
+                if m:
+                    total = int(m.group(2))
+                    if total > 1:
+                        return True, total
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Método 2: contar ítems de lista indicadores (puntos debajo de la imagen)
+    try:
+        li_count = page.locator("[role='dialog'] article ul li").count()
+        if li_count > 1:
+            return True, li_count
+    except Exception:
+        pass
+
+    # Método 3: presencia de ≥2 botones "Siguiente" (uno carousel + uno next post)
+    try:
+        for label in ("Siguiente", "Next"):
+            count = page.locator(f'button[aria-label="{label}"]').count()
+            if count >= 2:
+                return True, 0  # Carrusel confirmado, número exacto desconocido
+    except Exception:
+        pass
+
+    return False, 1
+
+
+def get_post_info_from_modal(page) -> Optional[Dict]:
+    """
+    Extrae la información del post actualmente abierto en el modal de Instagram:
+    kind, shortcode, datetime, date, is_carousel, image_count.
+    Retorna None si no se puede determinar.
+    """
+    current_url = page.url
+    m = re.search(r"/(p|reel)/([A-Za-z0-9_-]+)/", current_url)
+    if not m:
+        return None
+
+    kind_raw = m.group(1)   # "p" o "reel"
+    shortcode = m.group(2)
+
+    # Obtener fecha del elemento <time datetime="...">
+    post_datetime: Optional[str] = None
+    try:
+        page.wait_for_selector("time[datetime]", timeout=6000)
+        post_datetime = (page.locator("time[datetime]").first.get_attribute("datetime") or "").strip() or None
+    except Exception:
+        pass
+
+    # Fallback: extraer taken_at del HTML crudo
+    if not post_datetime:
+        try:
+            html = page.content()
+            tm = re.search(r'"taken_at"\s*:\s*(\d{10})', html)
+            if tm:
+                post_datetime = datetime.fromtimestamp(int(tm.group(1)), tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    post_date_value = parse_post_date_from_iso(post_datetime)
+
+    # Detectar carrusel
+    is_carousel, image_count = detect_carousel_from_modal(page)
+
+    return {
+        "kind": kind_raw,          # "p" o "reel"
+        "shortcode": shortcode,
+        "href": f"/{kind_raw}/{shortcode}/",
+        "post_datetime": post_datetime or "",
+        "post_date": post_date_value.isoformat() if post_date_value else "",
+        "is_carousel": is_carousel,
+        "image_count": image_count,
+    }
+
+
+def navigate_profile_with_arrow(
+    profile_url: str,
+    date_from: date,
+    date_to: Optional[date] = None,
+    content_mode: str = "both",
+    on_candidate: Optional[Callable[[Dict], bool]] = None,
+) -> Dict:
+    """
+    Navega un perfil de Instagram usando la flecha nativa (→) para pasar post a post.
+    - Si el post es un reel y content_mode='post', lo salta con la flecha.
+    - Detiene la navegación cuando el post supera la fecha límite (date_from).
+    - Detecta carruseles (posts con más de una imagen).
+    Retorna dict con posts candidatos y metadatos de la ejecución.
+    """
+    candidates: List[Dict] = []
+    accepted_candidates = 0
+    stop_due_to_date = False
+    latest_visible_shortcode = ""
+    latest_visible_kind = ""
+    content_mode = parse_content_mode(content_mode)
+
+    source_meta = build_source_metadata(profile_url)
+    source_label = source_meta.get("source_label") or profile_url
+
+    log_section(f"EXTRAYENDO FUENTE (flecha): {source_label}")
+    log(f"[SOURCE] {_ts()} 🌐 URL perfil: {profile_url}")
+    log(f"[SOURCE] {_ts()} 📅 Scrapear hasta fecha: {date_from.isoformat()}")
+    if date_to:
+        log(f"[SOURCE] {_ts()} 📅 Límite superior: {date_to.isoformat()}")
+    log(f"[SOURCE] {_ts()} 🧩 Contenido: {build_content_mode_label(content_mode)}")
+
+    MAX_POSTS_SAFETY = 2000  # límite de seguridad
+
+    with sync_playwright() as p:
+        log(f"[BROWSER] {_ts()} 🚀 Iniciando Chromium para {source_label}…")
+        browser = p.chromium.launch(headless=BROWSER_HEADLESS)
+        random_delay(DELAY_BROWSER_BOOT_MIN, DELAY_BROWSER_BOOT_MAX, "Boot navegador")
+
+        context = build_context(browser)
+        page = context.new_page()
+        random_delay(DELAY_AFTER_NEW_PAGE_MIN, DELAY_AFTER_NEW_PAGE_MAX)
+
+        log(f"[NAV] {_ts()} ➡ Navegando a perfil: {profile_url}")
+        page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
+        save_live_screenshot(page, label=f"Cargando perfil {source_label}", scroll_idx=0)
+        random_delay(DELAY_PROFILE_LOAD_MIN, DELAY_PROFILE_LOAD_MAX, f"Cargando perfil {source_label}")
+
+        overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
+        if overlay_actions == 0:
+            log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
+        random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, f"Estabilizando perfil")
+
+        # Esperar a que aparezcan posts en el grid
+        GRID_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]'
+        try:
+            page.wait_for_selector(GRID_SELECTOR, timeout=12000)
+            initial_count = page.locator(GRID_SELECTOR).count()
+            log(f"[NAV] {_ts()} ✓ Posts detectados en grid: {initial_count}")
+        except PlaywrightTimeoutError:
+            dismiss_transient_overlays(page, source_label=source_label, passes=2)
+            try:
+                page.wait_for_selector(GRID_SELECTOR, timeout=8000)
+            except PlaywrightTimeoutError:
+                html_path, png_path = save_debug_artifacts(page, "sin_posts_en_grid")
+                log(f"[WARN] {_ts()} No aparecieron posts en el grid de {source_label}. Debug: {png_path}")
+                browser.close()
+                return {"posts": [], "stop_due_to_date": False, "latest_visible_shortcode": "",
+                        "latest_visible_kind": "", "detected_total": 0, "accepted_total": 0}
+
+        # Clic en el primer post del grid (el más reciente)
+        first_link = page.locator(GRID_SELECTOR).first
+        first_href = first_link.get_attribute("href") or ""
+        log(f"[NAV] {_ts()} 🖱 Abriendo primer post del grid: {first_href}")
+        first_link.click()
+        random_delay(2.2, 3.8, "Esperando apertura del modal")
+        dismiss_transient_overlays(page, source_label=source_label, passes=1)
+
+        save_live_screenshot(page, label=f"Modal abierto — {source_label}", scroll_idx=0)
+
+        post_index = 0
+        consecutive_skipped = 0
+        MAX_CONSECUTIVE_SKIPPED = 30  # Si saltamos muchos seguidos, algo raro pasa
+
+        while post_index < MAX_POSTS_SAFETY:
+            post_index += 1
+
+            # Extraer info del post actualmente visible en el modal
+            post_info = get_post_info_from_modal(page)
+            if not post_info:
+                log(f"[WARN] {_ts()} No se pudo extraer info del modal (URL: {page.url}). Deteniendo.")
+                save_live_screenshot(page, label="⚠ Modal sin info", scroll_idx=post_index)
+                break
+
+            kind = post_info["kind"]
+            shortcode = post_info["shortcode"]
+            post_date_value = parse_post_date_from_iso(post_info.get("post_datetime"))
+            is_carousel = post_info.get("is_carousel", False)
+            image_count = post_info.get("image_count", 1)
+
+            if not latest_visible_shortcode:
+                latest_visible_shortcode = shortcode
+                latest_visible_kind = kind
+                log(f"[INFO] {_ts()} 📌 Primer post visible en modal: {kind}:{shortcode}")
+
+            carousel_label = f" | 📸 carrusel x{image_count}" if is_carousel else ""
+            log(f"[POST] {_ts()} 🔍 #{post_index} {kind}:{shortcode} | fecha={post_info.get('post_date', '?')}{carousel_label}")
+
+            # Saltar reels si el modo es solo posts
+            if kind == "reel" and content_mode == "post":
+                log(f"[SKIP] {_ts()} 🎬 Reel → pasando al siguiente con flecha: {shortcode}")
+                consecutive_skipped += 1
+                if consecutive_skipped >= MAX_CONSECUTIVE_SKIPPED:
+                    log(f"[WARN] {_ts()} Demasiados reels consecutivos ({MAX_CONSECUTIVE_SKIPPED}). Deteniendo.")
+                    break
+                if not click_next_post_arrow(page, shortcode):
+                    log(f"[STOP] {_ts()} Sin flecha siguiente tras reel. Fin del perfil.")
+                    break
+                random_delay(1.0, 2.2)
+                continue
+
+            consecutive_skipped = 0  # reset si no era reel
+
+            # Verificar si ya pasamos la fecha límite inferior
+            if should_stop_after_candidate(post_date_value, date_from):
+                log(f"[STOP] {_ts()} 📅 Límite de fecha alcanzado → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
+                stop_due_to_date = True
+                break
+
+            # Verificar si el post está dentro del rango de fechas
+            if not match_post_date(post_date_value, date_from, date_to):
+                log(f"[SKIP] {_ts()} 📅 Fuera de rango → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
+                if not click_next_post_arrow(page, shortcode):
+                    break
+                random_delay(0.8, 2.0)
+                continue
+
+            # Post válido — candidato
+            candidates.append(post_info)
+            handled_now = False
+            if on_candidate is not None:
+                try:
+                    handled_now = bool(on_candidate(post_info))
+                    if handled_now:
+                        accepted_candidates += 1
+                except Exception as exc:
+                    log(f"[ERROR] {_ts()} ❌ Fallo en callback de candidato {kind}:{shortcode} → {exc}")
+            else:
+                accepted_candidates += 1
+
+            save_live_screenshot(page, label=f"✅ Candidato {shortcode}", scroll_idx=post_index,
+                                 extra=f"fecha={post_info.get('post_date')}{carousel_label}")
+
+            log(f"[OK] {_ts()} ✅ Candidato aceptado: {kind}:{shortcode} | total candidatos: {len(candidates)}")
+
+            # Navegar al siguiente post con la flecha de Instagram
+            log(f"[NAV] {_ts()} ➡ Navegando al siguiente post…")
+            if not click_next_post_arrow(page, shortcode):
+                log(f"[STOP] {_ts()} 🏁 Sin flecha siguiente. Fin del perfil.")
+                break
+
+            random_delay(DELAY_AFTER_SCROLL_MIN / 2, DELAY_AFTER_SCROLL_MAX / 2,
+                         f"Pausa entre posts en {source_label}")
+
+        log_section(
+            f"FIN EXTRACCIÓN: {source_label} — "
+            f"{accepted_candidates} aceptados / {len(candidates)} candidatos / {post_index} visitados"
+        )
+        browser.close()
+
+    return {
+        "posts": candidates,
+        "latest_visible_shortcode": latest_visible_shortcode,
+        "latest_visible_kind": latest_visible_kind,
+        "stop_due_to_date": stop_due_to_date,
+        "stop_due_to_boundary": False,
+        "detected_total": post_index,
+        "accepted_total": accepted_candidates,
+    }
+
+
+# ── (Legacy: funciones de scroll — reemplazadas por navigate_profile_with_arrow) ─
+# Se mantienen por compatibilidad pero ya no se invocan en el flujo principal.
 
 def _wait_for_new_content(page, prev_count: int, selector: str, timeout: float = DELAY_SCROLL_CONTENT_TIMEOUT) -> int:
     """
@@ -1647,10 +1991,13 @@ def build_download_payload(
     post_dir: Optional[Path] = None,
     image_path: Optional[Path] = None,
     caption: str = "",
+    is_carousel: bool = False,
+    image_count: int = 1,
 ) -> Dict:
     source_meta = build_source_metadata(profile_url)
     safe_post_dir = post_dir or expected_post_dir(shortcode, profile_url=profile_url)
     safe_image_path = image_path or find_latest_image(safe_post_dir)
+    _image_count = max(1, int(image_count or 1))
 
     return {
         "kind": kind,
@@ -1669,6 +2016,9 @@ def build_download_payload(
         "ocr_best": "",
         "merged_text": caption.strip(),
         "preprocessed_image": "",
+        "is_carousel": is_carousel,
+        "image_count": _image_count,
+        "has_multiple_images": is_carousel and _image_count > 2,
     }
 
 
@@ -1678,6 +2028,8 @@ def download_shortcode(
     profile_url: str = "",
     post_datetime: str = "",
     post_date: str = "",
+    is_carousel: bool = False,
+    image_count: int = 1,
 ) -> Dict:
     post_url = build_post_url(kind, shortcode)
     log(f"[POST] {_ts()} 📥 Preparando descarga {kind}:{shortcode} | URL: {post_url}")
@@ -1689,6 +2041,8 @@ def download_shortcode(
         raise FileNotFoundError(f"No encontré imagen descargada en {post_dir}")
 
     log(f"[POST] {_ts()} 🖼 Imagen encontrada: {image_path.name} ({image_path.stat().st_size // 1024} KB)")
+    if is_carousel:
+        log(f"[POST] {_ts()} 📸 Carrusel detectado: {image_count} imágenes en {kind}:{shortcode}")
 
     caption = read_caption_for_image(image_path)
     if caption:
@@ -1705,6 +2059,8 @@ def download_shortcode(
         post_dir=post_dir,
         image_path=image_path,
         caption=caption,
+        is_carousel=is_carousel,
+        image_count=image_count,
     )
 
     out_json = write_analysis_payload(post_dir, shortcode, payload)
@@ -1769,11 +2125,13 @@ def download_shortcode_with_retry(
     profile_url: str = "",
     post_datetime: str = "",
     post_date: str = "",
+    is_carousel: bool = False,
+    image_count: int = 1,
 ) -> Dict:
     last_exc: Exception = RuntimeError("Sin reintentos de descarga")
     for attempt in range(1, MAX_RETRIES_PER_POST + 2):
         try:
-            return download_shortcode(kind, shortcode, profile_url, post_datetime, post_date)
+            return download_shortcode(kind, shortcode, profile_url, post_datetime, post_date, is_carousel, image_count)
         except Exception as exc:
             last_exc = exc
             if attempt <= MAX_RETRIES_PER_POST:
@@ -1813,19 +2171,19 @@ def ocr_payload_with_retry(payload: Dict) -> Dict:
 
 def process_source(
     profile_url: str,
-    target_new_count: Optional[int],
+    date_from: date,
     acquired_shortcodes: Set[str],
     results: List[Dict],
     pending_ocr: List[Dict],
-    date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    stop_at_shortcode: str = "",
-    collect_all_matching: bool = False,
     source_index: int = 0,
     source_total: int = 0,
     content_mode: str = "both",
 ) -> Dict[str, int]:
-    requested_count = parse_positive_limit(target_new_count) if target_new_count is not None else None
+    """
+    Procesa una fuente usando navegación por flecha de Instagram.
+    Requiere date_from (fecha límite inferior obligatoria).
+    """
     stats = {
         "downloaded": 0,
         "queued_existing": 0,
@@ -1838,15 +2196,18 @@ def process_source(
     content_mode = parse_content_mode(content_mode)
 
     log(f"\n[SOURCE] {_ts()} 🚀 Iniciando fuente {source_index}/{source_total}: {source_label} ({profile_url})")
-    log(f"[SOURCE] {_ts()} 🧩 Filtro de contenido activo: {build_content_mode_label(content_mode)}")
-    log(f"[SOURCE] {_ts()} 🪜 Flujo activo: detectar candidato válido → descargar inmediato + caption → OCR diferido por lote")
+    log(f"[SOURCE] {_ts()} 🧩 Filtro de contenido: {build_content_mode_label(content_mode)}")
+    log(f"[SOURCE] {_ts()} 🪜 Flujo: flecha Instagram → detección de fecha/carrusel en modal → descarga → OCR por lote")
 
     def handle_candidate_immediately(item: Dict) -> bool:
         shortcode = item["shortcode"]
         kind = item["kind"]
         post_date_label = item.get("post_date") or "sin fecha"
+        is_carousel = bool(item.get("is_carousel", False))
+        image_count = int(item.get("image_count") or 1)
 
-        log(f"\n[POST] {_ts()} 📌 Candidato válido detectado en {source_label}: {kind}:{shortcode} | fecha={post_date_label}")
+        log(f"\n[POST] {_ts()} 📌 Candidato: {kind}:{shortcode} | fecha={post_date_label}" +
+            (f" | 📸 carrusel x{image_count}" if is_carousel else ""))
 
         if shortcode in acquired_shortcodes:
             stats["skipped"] += 1
@@ -1864,26 +2225,26 @@ def process_source(
             registry_payload = find_payload(shortcode, statuses=["processed", "downloaded"])
             if registry_payload:
                 existing_payload_info = ("registry_status", registry_payload)
+
         if existing_payload_info:
             existing_state, existing_payload = existing_payload_info
             acquired_shortcodes.add(shortcode)
+            # Enriquecer payload existente con datos de carrusel si faltaban
+            if is_carousel and not existing_payload.get("is_carousel"):
+                existing_payload["is_carousel"] = is_carousel
+                existing_payload["image_count"] = image_count
+                existing_payload["has_multiple_images"] = is_carousel and image_count > 2
 
             if existing_state in {"processed_cache", "processed_disk"}:
                 results.append(existing_payload)
                 stats["already_processed"] += 1
-                log(
-                    f"[SKIP] {_ts()} ⏭ Post ya existe, se omite descarga y OCR → {kind}:{shortcode} "
-                    f"| origen={existing_state} | {existing_post_label(existing_payload, shortcode)}"
-                )
+                log(f"[SKIP] {_ts()} ⏭ Ya procesado → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}")
                 return True
 
             pending_ocr.append(existing_payload)
             results.append(existing_payload)
             stats["queued_existing"] += 1
-            log(
-                f"[SKIP] {_ts()} ⏭ Post ya existe, se omite descarga y se reutiliza para OCR → {kind}:{shortcode} "
-                f"| origen={existing_state} | {existing_post_label(existing_payload, shortcode)}"
-            )
+            log(f"[SKIP] {_ts()} ⏭ Descargado previo, encolado para OCR → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}")
             return True
 
         try:
@@ -1893,36 +2254,26 @@ def process_source(
                 profile_url=profile_url,
                 post_datetime=item.get("post_datetime", ""),
                 post_date=item.get("post_date", ""),
+                is_carousel=is_carousel,
+                image_count=image_count,
             )
             acquired_shortcodes.add(shortcode)
             pending_ocr.append(payload)
             results.append(payload)
             stats["downloaded"] += 1
-            log(
-                f"[OK] {_ts()} ✅ Post descargado de inmediato y encolado para OCR: {kind}:{shortcode} | "
-                f"progreso descargas nuevas {stats['downloaded']}/{requested_count if requested_count is not None else 'todos'}"
-            )
-            if requested_count is None or collect_all_matching or (stats["downloaded"] < requested_count):
-                random_delay(
-                    DELAY_BETWEEN_POSTS_MIN,
-                    DELAY_BETWEEN_POSTS_MAX,
-                    f"Pausa tras descarga inmediata en {source_label}",
-                )
+            log(f"[OK] {_ts()} ✅ Descargado y encolado para OCR: {kind}:{shortcode} | total nuevos: {stats['downloaded']}")
+            random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX,
+                         f"Pausa tras descarga en {source_label}")
             return True
         except Exception as exc:
             stats["failed"] += 1
-            log(f"[ERROR] {_ts()} ❌ Falló descarga inmediata para {kind}:{shortcode} → {exc}")
+            log(f"[ERROR] {_ts()} ❌ Falló descarga para {kind}:{shortcode} → {exc}")
             return False
 
-    extraction = extract_shortcodes_from_profile(
+    extraction = navigate_profile_with_arrow(
         profile_url,
-        target_new_count=requested_count,
-        known_shortcodes=acquired_shortcodes,
-        headless=BROWSER_HEADLESS,
         date_from=date_from,
         date_to=date_to,
-        stop_at_shortcode=stop_at_shortcode,
-        collect_all_matching=collect_all_matching,
         content_mode=content_mode,
         on_candidate=handle_candidate_immediately,
     )
@@ -1935,93 +2286,127 @@ def process_source(
         log(f"[SOURCE] {_ts()} 💾 Estado de fuente actualizado: último slug={latest_visible_shortcode}")
 
     if not posts:
-        if extraction.get("stop_due_to_boundary"):
-            log(f"[INFO] {_ts()} ℹ Sin posts nuevos para {source_label}. Último slug coincide con el guardado.")
-        else:
-            log(f"[WARN] {_ts()} ⚠ No se encontraron posts candidatos en {source_label}")
+        log(f"[WARN] {_ts()} ⚠ No se encontraron posts candidatos en {source_label}")
         return stats
 
     detected = [
         f"{p['kind']}:{p['shortcode']}" + (f"@{p.get('post_date')}" if p.get("post_date") else "")
         for p in posts
     ]
-    if detected:
-        log(f"[SOURCE] {_ts()} 📋 Candidatos válidos detectados y manejados en línea en {source_label}: {detected}")
+    log(f"[SOURCE] {_ts()} 📋 Candidatos en {source_label}: {detected}")
     if extraction.get("stop_due_to_date"):
+        next_idx = source_index + 1
         if source_index and source_total and source_index < source_total:
-            log(f"[SOURCE] {_ts()} 🔁 Fecha límite alcanzada en {source_label}. Se pasa automáticamente a la siguiente fuente ({source_index + 1}/{source_total}).")
+            log(f"[SOURCE] {_ts()} 🔁 Fecha límite alcanzada → pasando a fuente {next_idx}/{source_total}.")
         else:
-            log(f"[SOURCE] {_ts()} 🏁 Fecha límite alcanzada en {source_label}. No quedan más fuentes por procesar.")
-    log(
-        f"[SOURCE] {_ts()} 📦 Resumen manejo inmediato en {source_label}: "
-        f"descargados={stats['downloaded']} | reutilizados-descargados={stats['queued_existing']} | "
-        f"ya-procesados={stats['already_processed']} | fallidos={stats['failed']}"
-    )
+            log(f"[SOURCE] {_ts()} 🏁 Fecha límite alcanzada en última fuente.")
 
     handled_total = extraction.get("accepted_total", 0)
-    if requested_count is not None and not collect_all_matching and handled_total < requested_count:
-        log(
-            f"[WARN] {_ts()} ⚠ {source_label} no alcanzó la meta de candidatos manejados. "
-            f"Solicitados: {requested_count}, manejados: {handled_total}, descargados nuevos: {stats['downloaded']}."
-        )
-
     log(
         f"[SOURCE] {_ts()} 🏁 Fin fuente {source_label}: "
-        f"manejados={handled_total} | descargados={stats['downloaded']} | pendientes OCR reaprovechados={stats['queued_existing']} | "
-        f"ya procesados={stats['already_processed']} | omitidos={stats['skipped']} | fallidos={stats['failed']}"
+        f"manejados={handled_total} | descargados={stats['downloaded']} | "
+        f"reutilizados={stats['queued_existing']} | ya_procesados={stats['already_processed']} | "
+        f"omitidos={stats['skipped']} | fallidos={stats['failed']}"
     )
     return stats
 
 
 # ── Lote de fuentes ───────────────────────────────────────────────────────────
 
+def write_scrape_summary_log(
+    source_jobs: List[Dict],
+    date_from: date,
+    date_to: Optional[date],
+    run_start_iso: str,
+    total_downloaded: int,
+    total_already_processed: int,
+    total_ocr_processed: int,
+    total_failed: int,
+    content_mode: str,
+) -> None:
+    """Escribe un log de resumen al final de cada ejecución."""
+    run_end_iso = utc_now_iso()
+    sources = [build_source_metadata(str(j.get("profile_url", ""))).get("source_label") or str(j.get("profile_url", "")) for j in source_jobs]
+    lower, upper = build_effective_date_bounds(date_from, date_to)
+    summary_lines = [
+        "",
+        "═" * 70,
+        f"  RESUMEN DE EJECUCIÓN",
+        "═" * 70,
+        f"  Inicio       : {run_start_iso}",
+        f"  Fin          : {run_end_iso}",
+        f"  Fuentes      : {', '.join(sources)}",
+        f"  Contenido    : {build_content_mode_label(content_mode)}",
+        f"  Rango fechas : desde {lower.isoformat() if lower else '?'} hasta {upper.isoformat() if upper else local_today().isoformat()}",
+        f"  Descargados  : {total_downloaded}",
+        f"  Ya procesados: {total_already_processed}",
+        f"  OCR ok       : {total_ocr_processed}",
+        f"  Fallidos     : {total_failed}",
+        "═" * 70,
+        "",
+    ]
+    summary_text = "\n".join(summary_lines)
+    log(summary_text)
+
+    # Escribir también en un archivo de resumen dedicado
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    summary_log_path = BASE_DIR / "scrape_summary.log"
+    with summary_log_path.open("a", encoding="utf-8") as fh:
+        fh.write(summary_text + "\n")
+    log(f"[RUN] {_ts()} 📝 Resumen guardado en: {summary_log_path}")
+
+
+# ── Lote de fuentes ───────────────────────────────────────────────────────────
+
 def run_scrape_jobs(
     source_jobs: List[Dict[str, int | str]],
-    shared_total_limit: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    scheduler_all_new: bool = False,
     content_mode: str = "both",
 ) -> Dict[str, int]:
+    """
+    Punto de entrada principal del scraper.
+    REQUIERE date_from (fecha límite inferior).
+    Usa navegación por flecha de Instagram; no hay modo por cantidad.
+    """
     if not source_jobs:
         raise ValueError("No se recibieron fuentes para procesar.")
+    if not date_from:
+        raise ValueError("Se requiere una fecha límite (--until). Ejemplo: --until 010325")
 
     BASE_DIR.mkdir(parents=True, exist_ok=True)
     validate_date_range(date_from, date_to)
     content_mode = parse_content_mode(content_mode)
     reset_manual_log()
-    collect_all_by_date = bool(date_from or date_to)
-    if collect_all_by_date or scheduler_all_new:
-        source_jobs = [
-            {"profile_url": str(job.get("profile_url", "")).strip()}
-            for job in source_jobs
-            if str(job.get("profile_url", "")).strip()
-        ]
-        shared_total_limit = None
 
+    source_jobs = [
+        {"profile_url": str(job.get("profile_url", "")).strip()}
+        for job in source_jobs
+        if str(job.get("profile_url", "")).strip()
+    ]
+
+    run_start_iso = utc_now_iso()
     run_prefix = "programada" if IS_SCHEDULER_RUN else "manual"
-    log_section(f"INICIO DE EJECUCIÓN {run_prefix.upper()} — {utc_now_iso()}")
-    log(f"[RUN] {_ts()} 🗓 Modo temporal: {build_mode_label(date_from, date_to)}")
-    if date_from or date_to:
-        lower, upper = build_effective_date_bounds(date_from, date_to)
-        log(f"[RUN] {_ts()} 📅 Ventana temporal efectiva: desde={lower.isoformat() if lower else '-'} | hasta={upper.isoformat() if upper else '-'} | hoy={local_today().isoformat()}")
+    lower, upper = build_effective_date_bounds(date_from, date_to)
+
+    log_section(f"INICIO DE EJECUCIÓN {run_prefix.upper()} — {run_start_iso}")
+    log(f"[RUN] {_ts()} 🗓 Rango temporal: desde {lower.isoformat() if lower else '?'} hasta {upper.isoformat() if upper else local_today().isoformat()}")
     log(f"[RUN] {_ts()} 🧩 Tipo de contenido: {build_content_mode_label(content_mode)}")
-    log(f"[RUN] {_ts()} 📡 Fuentes recibidas: {len(source_jobs)}")
-    log(f"[RUN] {_ts()} 🪜 Pipeline: validación de fecha → descarga/caption por fuente → OCR masivo al final")
-    log(f"[RUN] {_ts()} ⚙ Pacing activo: perfil={BEHAVIOR_PROFILE} | factor={DELAY_FACTOR} | browser_headless={BROWSER_HEADLESS}")
+    log(f"[RUN] {_ts()} 📡 Fuentes: {len(source_jobs)}")
+    log(f"[RUN] {_ts()} 🪜 Modo: flecha Instagram → fecha detectada en modal → descarga → OCR por lote")
+    log(f"[RUN] {_ts()} ⚙  Pacing: perfil={BEHAVIOR_PROFILE} | factor={DELAY_FACTOR} | headless={BROWSER_HEADLESS}")
     for i, job in enumerate(source_jobs, 1):
-        log(f"[RUN] {_ts()}   {i}. {build_source_execution_label(job, collect_all_by_date=collect_all_by_date, scheduler_all_new=scheduler_all_new)}")
-    if scheduler_all_new:
-        log(f"[RUN] {_ts()} 🔄 Modo scheduler: se buscarán todos los posts nuevos por fuente hasta el slug conocido.")
+        meta = build_source_metadata(str(job.get("profile_url", "")))
+        log(f"[RUN] {_ts()}   {i}. {meta.get('source_label') or job.get('profile_url')} (corte por fecha: {date_from.isoformat()})")
 
     init_registry()
     synced = bootstrap_registry_from_disk()
     if synced:
-        log(f"[RUN] {_ts()} 🗄 Registro local sincronizado con {synced} análisis existentes en disco.")
+        log(f"[RUN] {_ts()} 🗄 Registro sincronizado: {synced} análisis existentes.")
 
     processed_shortcodes = set(load_processed_shortcodes())
     acquired_shortcodes = set(processed_shortcodes)
-    log(f"[RUN] {_ts()} 🔒 Total posts ya procesados en registro: {len(processed_shortcodes)}")
+    log(f"[RUN] {_ts()} 🔒 Posts ya procesados en registro: {len(processed_shortcodes)}")
 
     results: List[Dict] = []
     pending_ocr: List[Dict] = []
@@ -2040,109 +2425,48 @@ def run_scrape_jobs(
         summary_path.write_text(json.dumps(merged_summary, ensure_ascii=False, indent=2), encoding="utf-8")
         return len(merged_summary)
 
-    if shared_total_limit is not None and not collect_all_by_date and not scheduler_all_new:
-        shared_total_limit = parse_positive_limit(shared_total_limit)
-        profile_urls = [str(job["profile_url"]) for job in source_jobs]
-        log(f"[RUN] {_ts()} 🌐 Modo global: objetivo total {shared_total_limit} posts nuevos entre {len(profile_urls)} fuentes")
+    # ── Etapa 1: Navegación por flecha + descargas por fuente ────────────────
+    for idx, job in enumerate(source_jobs, start=1):
+        profile_url = str(job["profile_url"])
+        meta = build_source_metadata(profile_url)
+        source_label = meta.get("source_label") or profile_url
+        log(f"\n[RUN] {_ts()} ▶ Fuente {idx}/{len(source_jobs)}: {source_label}")
+        log(f"[RUN] {_ts()} 📅 Scrapear hasta: {date_from.isoformat()}")
 
-        for idx, profile_url in enumerate(profile_urls, start=1):
-            if total_downloaded >= shared_total_limit:
-                log(f"[RUN] {_ts()} 🎯 Objetivo global de descarga alcanzado ({total_downloaded}/{shared_total_limit}). Deteniendo etapa 1.")
-                break
+        source_stats = process_source(
+            profile_url=profile_url,
+            date_from=date_from,
+            acquired_shortcodes=acquired_shortcodes,
+            results=results,
+            pending_ocr=pending_ocr,
+            date_to=date_to,
+            source_index=idx,
+            source_total=len(source_jobs),
+            content_mode=content_mode,
+        )
+        total_downloaded += source_stats["downloaded"]
+        total_queued_existing += source_stats["queued_existing"]
+        total_already_processed += source_stats["already_processed"]
+        total_skipped += source_stats["skipped"]
+        total_failed_download += source_stats["failed"]
 
-            remaining = shared_total_limit - total_downloaded
-            log(f"\n[RUN] {_ts()} ▶ Fuente {idx}/{len(profile_urls)}: {profile_url} | faltan {remaining} descargas globales")
-
-            source_stats = process_source(
-                profile_url,
-                remaining,
-                acquired_shortcodes,
-                results,
-                pending_ocr,
-                date_from=date_from,
-                date_to=date_to,
-                source_index=idx,
-                source_total=len(profile_urls),
-                content_mode=content_mode,
-            )
-            total_downloaded += source_stats["downloaded"]
-            total_queued_existing += source_stats["queued_existing"]
-            total_already_processed += source_stats["already_processed"]
-            total_skipped += source_stats["skipped"]
-            total_failed_download += source_stats["failed"]
-
-            if idx < len(profile_urls) and total_downloaded < shared_total_limit:
-                random_delay(
-                    DELAY_BETWEEN_SOURCES_MIN,
-                    DELAY_BETWEEN_SOURCES_MAX,
-                    f"Pausa entre fuente {idx} y {idx + 1} de {len(profile_urls)}",
-                )
-    else:
-        if collect_all_by_date:
-            log(f"[RUN] {_ts()} 🌐 Modo por fecha: sin límite por cantidad, corte por fecha por cada fuente.")
-        elif scheduler_all_new:
-            log(f"[RUN] {_ts()} 🌐 Modo scheduler por fuente: solo nuevos, sin cuota fija.")
-        else:
-            log(f"[RUN] {_ts()} 🌐 Modo por fuente (cuotas independientes)")
-
-        if collect_all_by_date:
-            log(f"[RUN] {_ts()} 📅 Modo temporal con fecha: scrapeo total sin límite por cantidad ({build_mode_label(date_from, date_to)}).")
-
-        for idx, job in enumerate(source_jobs, start=1):
-            profile_url = str(job["profile_url"])
-            configured_limit = parse_positive_limit(job.get("limit"), DEFAULT_LIMIT)
-            stop_at_shortcode = get_last_known_shortcode(profile_url) if scheduler_all_new else ""
-            target_for_source = None if (collect_all_by_date or scheduler_all_new) else configured_limit
-            meta = build_source_metadata(profile_url)
-            source_label = meta.get("source_label") or profile_url
-
-            log(f"\n[RUN] {_ts()} ▶ Fuente {idx}/{len(source_jobs)}: {source_label}")
-            if scheduler_all_new:
-                log(f"[RUN] {_ts()} 🔄 Objetivo: todos los nuevos. Último slug: {stop_at_shortcode or '-'}")
-            elif collect_all_by_date:
-                log(f"[RUN] {_ts()} 📅 Objetivo: todos los posts que coincidan con {build_mode_label(date_from, date_to)}.")
-            else:
-                log(f"[RUN] {_ts()} 🎯 Objetivo: {configured_limit} posts nuevos.")
-
-            source_stats = process_source(
-                profile_url,
-                target_for_source,
-                acquired_shortcodes,
-                results,
-                pending_ocr,
-                date_from=date_from,
-                date_to=date_to,
-                stop_at_shortcode=stop_at_shortcode,
-                collect_all_matching=bool(collect_all_by_date or scheduler_all_new),
-                source_index=idx,
-                source_total=len(source_jobs),
-                content_mode=content_mode,
-            )
-            total_downloaded += source_stats["downloaded"]
-            total_queued_existing += source_stats["queued_existing"]
-            total_already_processed += source_stats["already_processed"]
-            total_skipped += source_stats["skipped"]
-            total_failed_download += source_stats["failed"]
-
-            if idx < len(source_jobs):
-                random_delay(
-                    DELAY_BETWEEN_SOURCES_MIN,
-                    DELAY_BETWEEN_SOURCES_MAX,
-                    f"Pausa entre fuente {idx} ({source_label}) y la siguiente",
-                )
+        if idx < len(source_jobs):
+            random_delay(DELAY_BETWEEN_SOURCES_MIN, DELAY_BETWEEN_SOURCES_MAX,
+                         f"Pausa entre fuente {idx} ({source_label}) y la siguiente")
 
     summary_count_after_download = write_summary_snapshot()
-    log_section(f"ETAPA 1 COMPLETADA — DESCARGAS Y METADATA — {utc_now_iso()}")
-    log(f"[RUN] {_ts()} ⬇ Descargas nuevas      : {total_downloaded}")
-    log(f"[RUN] {_ts()} ♻ Descargas previas usadas: {total_queued_existing}")
-    log(f"[RUN] {_ts()} 🗄 Ya procesados con OCR : {total_already_processed}")
-    log(f"[RUN] {_ts()} 🚫 Omitidos             : {total_skipped}")
-    log(f"[RUN] {_ts()} ❌ Fallos de descarga   : {total_failed_download}")
-    log(f"[RUN] {_ts()} 📄 Resumen parcial      : {summary_count_after_download}")
+    log_section(f"ETAPA 1 COMPLETADA — DESCARGAS — {utc_now_iso()}")
+    log(f"[RUN] {_ts()} ⬇  Descargas nuevas       : {total_downloaded}")
+    log(f"[RUN] {_ts()} ♻  Descargas previas usadas: {total_queued_existing}")
+    log(f"[RUN] {_ts()} 🗄  Ya procesados con OCR  : {total_already_processed}")
+    log(f"[RUN] {_ts()} 🚫 Omitidos               : {total_skipped}")
+    log(f"[RUN] {_ts()} ❌ Fallos de descarga      : {total_failed_download}")
+    log(f"[RUN] {_ts()} 📄 Resumen parcial         : {summary_count_after_download}")
 
+    # ── Etapa 2: OCR masivo ───────────────────────────────────────────────────
     if pending_ocr:
-        log_section(f"ETAPA 2 — OCR MASIVO POSTERIOR A DESCARGAS — {utc_now_iso()}")
-        log(f"[RUN] {_ts()} 🧠 OCR pendiente para {len(pending_ocr)} posts descargados.")
+        log_section(f"ETAPA 2 — OCR — {utc_now_iso()}")
+        log(f"[RUN] {_ts()} 🧠 Posts pendientes de OCR: {len(pending_ocr)}")
 
         for idx, payload in enumerate(pending_ocr, start=1):
             shortcode = str(payload.get("shortcode", "") or "").strip()
@@ -2152,40 +2476,42 @@ def run_scrape_jobs(
                 enriched = ocr_payload_with_retry(payload)
                 results.append(enriched)
                 total_ocr_processed += 1
-                log(f"[OK] {_ts()} ✅ OCR completado para {kind}:{shortcode} | progreso {total_ocr_processed}/{len(pending_ocr)}")
+                log(f"[OK] {_ts()} ✅ OCR ok: {kind}:{shortcode} | {total_ocr_processed}/{len(pending_ocr)}")
             except Exception as exc:
                 total_ocr_failed += 1
-                log(f"[ERROR] {_ts()} ❌ Falló OCR para {kind}:{shortcode} → {exc}")
+                log(f"[ERROR] {_ts()} ❌ OCR fallido: {kind}:{shortcode} → {exc}")
 
             if idx < len(pending_ocr):
-                random_delay(
-                    DELAY_BETWEEN_POSTS_MIN,
-                    DELAY_BETWEEN_POSTS_MAX,
-                    f"Pausa entre OCR {idx} y {idx + 1}",
-                )
+                random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX,
+                             f"Pausa entre OCR {idx} y {idx + 1}")
     else:
-        log(f"[RUN] {_ts()} ℹ No hubo posts pendientes para OCR en esta ejecución.")
+        log(f"[RUN] {_ts()} ℹ No hubo posts pendientes para OCR.")
 
     summary_path = BASE_DIR / "summary_latest_posts.json"
     summary_total = write_summary_snapshot()
 
+    # ── Resumen final ─────────────────────────────────────────────────────────
     log_section(f"RESULTADO FINAL — {utc_now_iso()}")
-    log(f"[RUN] {_ts()} ✅ Descargas nuevas     : {total_downloaded}")
-    log(f"[RUN] {_ts()} ♻ Descargas reusadas   : {total_queued_existing}")
-    log(f"[RUN] {_ts()} 🗄 Ya con OCR en caché  : {total_already_processed}")
-    log(f"[RUN] {_ts()} 🔎 OCR completados      : {total_ocr_processed}")
-    log(f"[RUN] {_ts()} ❌ Fallos descarga      : {total_failed_download}")
-    log(f"[RUN] {_ts()} ❌ Fallos OCR           : {total_ocr_failed}")
-    log(f"[RUN] {_ts()} 🚫 Omitidos             : {total_skipped}")
-    log(f"[RUN] {_ts()} 📄 Total en resumen     : {summary_total}")
-    log(f"[RUN] {_ts()} 💾 Resumen guardado en  : {summary_path}")
+    log(f"[RUN] {_ts()} ✅ Descargas nuevas : {total_downloaded}")
+    log(f"[RUN] {_ts()} ♻  Reusadas         : {total_queued_existing}")
+    log(f"[RUN] {_ts()} 🗄  Ya con OCR       : {total_already_processed}")
+    log(f"[RUN] {_ts()} 🔎 OCR completados  : {total_ocr_processed}")
+    log(f"[RUN] {_ts()} ❌ Fallos descarga  : {total_failed_download}")
+    log(f"[RUN] {_ts()} ❌ Fallos OCR       : {total_ocr_failed}")
+    log(f"[RUN] {_ts()} 📄 Total en resumen : {summary_total}")
+    log(f"[RUN] {_ts()} 💾 Guardado en      : {summary_path}")
 
-    if shared_total_limit is not None and not collect_all_by_date and not scheduler_all_new and total_downloaded < shared_total_limit:
-        log(
-            f"[WARN] {_ts()} ⚠ No se alcanzó el objetivo global de descargas. "
-            f"Solicitados: {shared_total_limit}, obtenidos: {total_downloaded}."
-        )
-        log(f"[WARN] {_ts()} Causas típicas: pocos posts nuevos, perfil muy corto o fallas de descarga.")
+    write_scrape_summary_log(
+        source_jobs=source_jobs,
+        date_from=date_from,
+        date_to=date_to,
+        run_start_iso=run_start_iso,
+        total_downloaded=total_downloaded,
+        total_already_processed=total_already_processed,
+        total_ocr_processed=total_ocr_processed,
+        total_failed=total_failed_download + total_ocr_failed,
+        content_mode=content_mode,
+    )
 
     return {
         "processed": total_ocr_processed + total_already_processed,
@@ -2198,30 +2524,28 @@ def run_scrape_jobs(
     }
 
 
-
-
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def parse_cli_options(argv: List[str]) -> Tuple[List[str], Optional[date], Optional[date], bool, str]:
+def parse_cli_options(argv: List[str]) -> Tuple[List[str], Optional[date], Optional[date], str]:
+    """
+    Parsea opciones CLI. Solo modo por fecha: --until es obligatorio.
+    Retorna (remaining_args, date_from, date_to, content_mode).
+    """
     remaining: List[str] = []
     date_from: Optional[date] = None
     date_to: Optional[date] = None
-    scheduler_all_new = False
     content_mode = "both"
     idx = 0
 
     while idx < len(argv):
         token = argv[idx]
-        if token in {"--until", "--since"}:
+        if token in {"--until", "--since", "--date-from"}:
             if idx + 1 >= len(argv):
                 raise ValueError(f"Falta valor para {token}")
-            date_from = parse_compact_date(argv[idx + 1])
-            idx += 2
-            continue
-        if token == "--date-from":
-            if idx + 1 >= len(argv):
-                raise ValueError("Falta valor para --date-from")
-            date_from = parse_iso_date(argv[idx + 1])
+            if token == "--date-from":
+                date_from = parse_iso_date(argv[idx + 1])
+            else:
+                date_from = parse_compact_date(argv[idx + 1])
             idx += 2
             continue
         if token == "--date-to":
@@ -2230,52 +2554,67 @@ def parse_cli_options(argv: List[str]) -> Tuple[List[str], Optional[date], Optio
             date_to = parse_iso_date(argv[idx + 1])
             idx += 2
             continue
-        if token == "--scheduler-all-new":
-            scheduler_all_new = True
-            idx += 1
-            continue
         if token == "--content-mode":
             if idx + 1 >= len(argv):
                 raise ValueError("Debes indicar un valor después de --content-mode (both, post o reel).")
             content_mode = parse_content_mode(argv[idx + 1])
             idx += 2
             continue
+        # Ignorar flags legacy del scheduler (compatibilidad con web.py)
+        if token in {"--scheduler-all-new"}:
+            idx += 1
+            continue
         remaining.append(token)
         idx += 1
 
     validate_date_range(date_from, date_to)
-    return remaining, date_from, date_to, scheduler_all_new, content_mode
+    return remaining, date_from, date_to, content_mode
 
 
 def main() -> None:
     try:
-        argv, date_from, date_to, scheduler_all_new, content_mode = parse_cli_options(sys.argv[1:])
+        argv, date_from, date_to, content_mode = parse_cli_options(sys.argv[1:])
     except ValueError as exc:
         print(f"[ERROR] {exc}")
         sys.exit(1)
 
-    source_jobs, shared_total_limit, mode = parse_cli_jobs(argv)
-    if not source_jobs:
-        print("Uso global: python app.py https://www.instagram.com/biobiochile/ https://www.instagram.com/cnnchile/ 20")
-        print("Uso por fuente: python app.py @biobiochile=30 @cnnchile=50 @latercera=20")
-        print("Uso histórico hasta fecha objetivo: python app.py --until 010326 @biobiochile @cnnchile")
-        print("Filtrar contenido: python app.py --content-mode post @biobiochile=20")
-        print("Modo scheduler interno: python app.py --scheduler-all-new @biobiochile @cnnchile")
+    # Extraer URLs de perfil (ignorar tokens numéricos de modos legacy)
+    profile_sources: List[str] = []
+    for token in argv:
+        # Saltar tokens numéricos puros (eran límites en el modo antiguo)
+        if re.fullmatch(r"\d+", token.strip()):
+            continue
+        # Saltar tokens con formato "url=N" (modo legacy per-source)
+        clean_token = re.sub(r"(?:\s*(?:=|\|)\s*\d+)$", "", token.strip())
+        url = normalize_profile_url(clean_token)
+        if url:
+            profile_sources.append(url)
+
+    if not profile_sources:
+        print("Uso: python app.py --until DDMMAA @cuenta1 @cuenta2")
+        print("       python app.py --until 010325 https://www.instagram.com/biobiochile/")
+        print("       python app.py --date-from 2025-01-01 @biobiochile --content-mode post")
+        print("")
+        print("  --until DDMMAA      Fecha límite inferior (formato día-mes-año corto, ej: 010325)")
+        print("  --date-from YYYY-MM-DD  Alternativa con fecha ISO")
+        print("  --date-to YYYY-MM-DD    Límite superior (opcional, por defecto=hoy)")
+        print("  --content-mode MODE     both (defecto) | post | reel")
         sys.exit(1)
 
-    print(f"[INFO] {_ts()} Modo detectado: {mode}")
-    if date_from or date_to:
-        print(f"[INFO] {_ts()} Filtro temporal CLI: {build_mode_label(date_from, date_to)}")
-    if scheduler_all_new:
-        print(f"[INFO] {_ts()} Flag scheduler-all-new activa.")
-    print(f"[INFO] {_ts()} Filtro de contenido CLI: {build_content_mode_label(content_mode)}")
+    if not date_from:
+        print("[ERROR] Debes indicar una fecha límite con --until DDMMAA (ej: --until 010325)")
+        sys.exit(1)
+
+    source_jobs = [{"profile_url": url} for url in profile_sources]
+
+    print(f"[INFO] {_ts()} Fuentes: {[j['profile_url'] for j in source_jobs]}")
+    print(f"[INFO] {_ts()} Rango: {build_mode_label(date_from, date_to)}")
+    print(f"[INFO] {_ts()} Contenido: {build_content_mode_label(content_mode)}")
 
     run_scrape_jobs(
         source_jobs,
-        shared_total_limit=shared_total_limit,
         date_from=date_from,
         date_to=date_to,
-        scheduler_all_new=scheduler_all_new,
         content_mode=content_mode,
     )
 
