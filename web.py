@@ -398,6 +398,8 @@ def post_detail(shortcode: str):
 
 @app.route("/image/<path:rel_path>")
 def serve_image(rel_path: str):
+    if rel_path.startswith("/"):
+        abort(403)
     img_path = (BASE_DIR / rel_path).resolve()
     if not str(img_path).startswith(str(BASE_DIR.resolve())):
         abort(403)
@@ -565,4 +567,4 @@ if __name__ == "__main__":
     print("  Instagram Scraper Dashboard")
     print("  http://localhost:5000")
     print("=" * 60)
-    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)
+    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)

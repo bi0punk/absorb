@@ -1390,138 +1390,136 @@ def navigate_profile_with_arrow(
     with sync_playwright() as p:
         log(f"[BROWSER] {_ts()} 🚀 Iniciando Chromium para {source_label}…")
         browser = p.chromium.launch(headless=BROWSER_HEADLESS)
-        random_delay(DELAY_BROWSER_BOOT_MIN, DELAY_BROWSER_BOOT_MAX, "Boot navegador")
-
-        context = build_context(browser)
-        page = context.new_page()
-        random_delay(DELAY_AFTER_NEW_PAGE_MIN, DELAY_AFTER_NEW_PAGE_MAX)
-
-        log(f"[NAV] {_ts()} ➡ Navegando a perfil: {profile_url}")
-        page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
-        save_live_screenshot(page, label=f"Cargando perfil {source_label}", scroll_idx=0)
-        random_delay(DELAY_PROFILE_LOAD_MIN, DELAY_PROFILE_LOAD_MAX, f"Cargando perfil {source_label}")
-
-        overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
-        if overlay_actions == 0:
-            log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
-        random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, f"Estabilizando perfil")
-
-        # Esperar a que aparezcan posts en el grid
-        GRID_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]'
         try:
-            page.wait_for_selector(GRID_SELECTOR, timeout=12000)
-            initial_count = page.locator(GRID_SELECTOR).count()
-            log(f"[NAV] {_ts()} ✓ Posts detectados en grid: {initial_count}")
-        except PlaywrightTimeoutError:
-            dismiss_transient_overlays(page, source_label=source_label, passes=2)
+            random_delay(DELAY_BROWSER_BOOT_MIN, DELAY_BROWSER_BOOT_MAX, "Boot navegador")
+
+            context = build_context(browser)
+            page = context.new_page()
+            random_delay(DELAY_AFTER_NEW_PAGE_MIN, DELAY_AFTER_NEW_PAGE_MAX)
+
+            log(f"[NAV] {_ts()} ➡ Navegando a perfil: {profile_url}")
+            page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
+            save_live_screenshot(page, label=f"Cargando perfil {source_label}", scroll_idx=0)
+            random_delay(DELAY_PROFILE_LOAD_MIN, DELAY_PROFILE_LOAD_MAX, f"Cargando perfil {source_label}")
+
+            overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
+            if overlay_actions == 0:
+                log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
+            random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, f"Estabilizando perfil")
+
+            # Esperar a que aparezcan posts en el grid
+            GRID_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]'
             try:
-                page.wait_for_selector(GRID_SELECTOR, timeout=8000)
+                page.wait_for_selector(GRID_SELECTOR, timeout=12000)
+                initial_count = page.locator(GRID_SELECTOR).count()
+                log(f"[NAV] {_ts()} ✓ Posts detectados en grid: {initial_count}")
             except PlaywrightTimeoutError:
-                html_path, png_path = save_debug_artifacts(page, "sin_posts_en_grid")
-                log(f"[WARN] {_ts()} No aparecieron posts en el grid de {source_label}. Debug: {png_path}")
-                browser.close()
-                return {"posts": [], "stop_due_to_date": False, "latest_visible_shortcode": "",
-                        "latest_visible_kind": "", "detected_total": 0, "accepted_total": 0}
-
-        # Clic en el primer post del grid (el más reciente)
-        first_link = page.locator(GRID_SELECTOR).first
-        first_href = first_link.get_attribute("href") or ""
-        log(f"[NAV] {_ts()} 🖱 Abriendo primer post del grid: {first_href}")
-        first_link.click()
-        random_delay(2.2, 3.8, "Esperando apertura del modal")
-        dismiss_transient_overlays(page, source_label=source_label, passes=1)
-
-        save_live_screenshot(page, label=f"Modal abierto — {source_label}", scroll_idx=0)
-
-        post_index = 0
-        consecutive_skipped = 0
-        MAX_CONSECUTIVE_SKIPPED = 30  # Si saltamos muchos seguidos, algo raro pasa
-
-        while post_index < MAX_POSTS_SAFETY:
-            post_index += 1
-
-            # Extraer info del post actualmente visible en el modal
-            post_info = get_post_info_from_modal(page)
-            if not post_info:
-                log(f"[WARN] {_ts()} No se pudo extraer info del modal (URL: {page.url}). Deteniendo.")
-                save_live_screenshot(page, label="⚠ Modal sin info", scroll_idx=post_index)
-                break
-
-            kind = post_info["kind"]
-            shortcode = post_info["shortcode"]
-            post_date_value = parse_post_date_from_iso(post_info.get("post_datetime"))
-            is_carousel = post_info.get("is_carousel", False)
-            image_count = post_info.get("image_count", 1)
-
-            if not latest_visible_shortcode:
-                latest_visible_shortcode = shortcode
-                latest_visible_kind = kind
-                log(f"[INFO] {_ts()} 📌 Primer post visible en modal: {kind}:{shortcode}")
-
-            carousel_label = f" | 📸 carrusel x{image_count}" if is_carousel else ""
-            log(f"[POST] {_ts()} 🔍 #{post_index} {kind}:{shortcode} | fecha={post_info.get('post_date', '?')}{carousel_label}")
-
-            # Saltar reels si el modo es solo posts
-            if kind == "reel" and content_mode == "post":
-                log(f"[SKIP] {_ts()} 🎬 Reel → pasando al siguiente con flecha: {shortcode}")
-                consecutive_skipped += 1
-                if consecutive_skipped >= MAX_CONSECUTIVE_SKIPPED:
-                    log(f"[WARN] {_ts()} Demasiados reels consecutivos ({MAX_CONSECUTIVE_SKIPPED}). Deteniendo.")
-                    break
-                if not click_next_post_arrow(page, shortcode):
-                    log(f"[STOP] {_ts()} Sin flecha siguiente tras reel. Fin del perfil.")
-                    break
-                random_delay(1.0, 2.2)
-                continue
-
-            consecutive_skipped = 0  # reset si no era reel
-
-            # Verificar si ya pasamos la fecha límite inferior
-            if should_stop_after_candidate(post_date_value, date_from):
-                log(f"[STOP] {_ts()} 📅 Límite de fecha alcanzado → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
-                stop_due_to_date = True
-                break
-
-            # Verificar si el post está dentro del rango de fechas
-            if not match_post_date(post_date_value, date_from, date_to):
-                log(f"[SKIP] {_ts()} 📅 Fuera de rango → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
-                if not click_next_post_arrow(page, shortcode):
-                    break
-                random_delay(0.8, 2.0)
-                continue
-
-            # Post válido — candidato
-            candidates.append(post_info)
-            handled_now = False
-            if on_candidate is not None:
+                dismiss_transient_overlays(page, source_label=source_label, passes=2)
                 try:
-                    handled_now = bool(on_candidate(post_info))
-                    if handled_now:
-                        accepted_candidates += 1
-                except Exception as exc:
-                    log(f"[ERROR] {_ts()} ❌ Fallo en callback de candidato {kind}:{shortcode} → {exc}")
-            else:
-                accepted_candidates += 1
+                    page.wait_for_selector(GRID_SELECTOR, timeout=8000)
+                except PlaywrightTimeoutError:
+                    html_path, png_path = save_debug_artifacts(page, "sin_posts_en_grid")
+                    log(f"[WARN] {_ts()} No aparecieron posts en el grid de {source_label}. Debug: {png_path}")
+                    return {"posts": [], "stop_due_to_date": False, "latest_visible_shortcode": "",
+                            "latest_visible_kind": "", "detected_total": 0, "accepted_total": 0}
 
-            save_live_screenshot(page, label=f"✅ Candidato {shortcode}", scroll_idx=post_index,
-                                 extra=f"fecha={post_info.get('post_date')}{carousel_label}")
+            # Clic en el primer post del grid (el más reciente)
+            first_link = page.locator(GRID_SELECTOR).first
+            first_href = first_link.get_attribute("href") or ""
+            log(f"[NAV] {_ts()} 🖱 Abriendo primer post del grid: {first_href}")
+            first_link.click()
+            random_delay(2.2, 3.8, "Esperando apertura del modal")
+            dismiss_transient_overlays(page, source_label=source_label, passes=1)
 
-            log(f"[OK] {_ts()} ✅ Candidato aceptado: {kind}:{shortcode} | total candidatos: {len(candidates)}")
+            save_live_screenshot(page, label=f"Modal abierto — {source_label}", scroll_idx=0)
 
-            # Navegar al siguiente post con la flecha de Instagram
-            log(f"[NAV] {_ts()} ➡ Navegando al siguiente post…")
-            if not click_next_post_arrow(page, shortcode):
-                log(f"[STOP] {_ts()} 🏁 Sin flecha siguiente. Fin del perfil.")
-                break
+            post_index = 0
+            consecutive_skipped = 0
+            MAX_CONSECUTIVE_SKIPPED = 30
 
-            random_delay(DELAY_AFTER_SCROLL_MIN / 2, DELAY_AFTER_SCROLL_MAX / 2,
-                         f"Pausa entre posts en {source_label}")
+            while post_index < MAX_POSTS_SAFETY:
+                post_index += 1
 
-        log_section(
-            f"FIN EXTRACCIÓN: {source_label} — "
-            f"{accepted_candidates} aceptados / {len(candidates)} candidatos / {post_index} visitados"
-        )
-        browser.close()
+                post_info = get_post_info_from_modal(page)
+                if not post_info:
+                    log(f"[WARN] {_ts()} No se pudo extraer info del modal (URL: {page.url}). Deteniendo.")
+                    save_live_screenshot(page, label="⚠ Modal sin info", scroll_idx=post_index)
+                    break
+
+                kind = post_info["kind"]
+                shortcode = post_info["shortcode"]
+                post_date_value = parse_post_date_from_iso(post_info.get("post_datetime"))
+                is_carousel = post_info.get("is_carousel", False)
+                image_count = post_info.get("image_count", 1)
+
+                if not latest_visible_shortcode:
+                    latest_visible_shortcode = shortcode
+                    latest_visible_kind = kind
+                    log(f"[INFO] {_ts()} 📌 Primer post visible en modal: {kind}:{shortcode}")
+
+                carousel_label = f" | 📸 carrusel x{image_count}" if is_carousel else ""
+                log(f"[POST] {_ts()} 🔍 #{post_index} {kind}:{shortcode} | fecha={post_info.get('post_date', '?')}{carousel_label}")
+
+                if kind == "reel" and content_mode == "post":
+                    log(f"[SKIP] {_ts()} 🎬 Reel → pasando al siguiente con flecha: {shortcode}")
+                    consecutive_skipped += 1
+                    if consecutive_skipped >= MAX_CONSECUTIVE_SKIPPED:
+                        log(f"[WARN] {_ts()} Demasiados reels consecutivos ({MAX_CONSECUTIVE_SKIPPED}). Deteniendo.")
+                        break
+                    if not click_next_post_arrow(page, shortcode):
+                        log(f"[STOP] {_ts()} Sin flecha siguiente tras reel. Fin del perfil.")
+                        break
+                    random_delay(1.0, 2.2)
+                    continue
+
+                consecutive_skipped = 0
+
+                if should_stop_after_candidate(post_date_value, date_from):
+                    log(f"[STOP] {_ts()} 📅 Límite de fecha alcanzado → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
+                    stop_due_to_date = True
+                    break
+
+                if not match_post_date(post_date_value, date_from, date_to):
+                    log(f"[SKIP] {_ts()} 📅 Fuera de rango → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
+                    if not click_next_post_arrow(page, shortcode):
+                        break
+                    random_delay(0.8, 2.0)
+                    continue
+
+                candidates.append(post_info)
+                handled_now = False
+                if on_candidate is not None:
+                    try:
+                        handled_now = bool(on_candidate(post_info))
+                        if handled_now:
+                            accepted_candidates += 1
+                    except Exception as exc:
+                        log(f"[ERROR] {_ts()} ❌ Fallo en callback de candidato {kind}:{shortcode} → {exc}")
+                else:
+                    accepted_candidates += 1
+
+                save_live_screenshot(page, label=f"✅ Candidato {shortcode}", scroll_idx=post_index,
+                                     extra=f"fecha={post_info.get('post_date')}{carousel_label}")
+
+                log(f"[OK] {_ts()} ✅ Candidato aceptado: {kind}:{shortcode} | total candidatos: {len(candidates)}")
+
+                log(f"[NAV] {_ts()} ➡ Navegando al siguiente post…")
+                if not click_next_post_arrow(page, shortcode):
+                    log(f"[STOP] {_ts()} 🏁 Sin flecha siguiente. Fin del perfil.")
+                    break
+
+                random_delay(DELAY_AFTER_SCROLL_MIN / 2, DELAY_AFTER_SCROLL_MAX / 2,
+                             f"Pausa entre posts en {source_label}")
+
+            log_section(
+                f"FIN EXTRACCIÓN: {source_label} — "
+                f"{accepted_candidates} aceptados / {len(candidates)} candidatos / {post_index} visitados"
+            )
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     return {
         "posts": candidates,
@@ -1897,7 +1895,7 @@ def run_instaloader_for_shortcode(kind: str, shortcode: str, profile_url: str = 
     log(f"[DOWNLOAD] {_ts()} ⬇ Descargando {kind}:{shortcode} con Instaloader…")
     log(f"[DOWNLOAD] {_ts()} 🗂 Fuente destino: {source_dir}")
     log(f"[DOWNLOAD] {_ts()} 📂 Directorio destino: {outdir}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0:
         raise RuntimeError(
