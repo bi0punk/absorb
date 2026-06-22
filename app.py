@@ -1617,240 +1617,244 @@ def extract_shortcodes_from_profile(
         random_delay(DELAY_BROWSER_BOOT_MIN, DELAY_BROWSER_BOOT_MAX,
                      f"Esperando que el navegador termine de abrir en {source_label}")
 
-        context = build_context(browser)
-        page = context.new_page()
-        random_delay(DELAY_AFTER_NEW_PAGE_MIN, DELAY_AFTER_NEW_PAGE_MAX,
-                     f"Preparando pestaña nueva en {source_label}")
-
-        log(f"[NAV] {_ts()} ➡ Navegando a perfil: {profile_url}")
-        page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
-        save_live_screenshot(page, label=f"Cargando perfil {source_label}", scroll_idx=0,
-                             extra="Esperando contenido inicial…")
-
-        # Espera aleatoria carga inicial del perfil
-        random_delay(DELAY_PROFILE_LOAD_MIN, DELAY_PROFILE_LOAD_MAX,
-                     f"Cargando perfil {source_label}")
-
-        overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
-        if overlay_actions == 0:
-            log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
-
-        random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX,
-                     f"Estabilizando vista del perfil {source_label}")
-
-        save_live_screenshot(page, label=f"Perfil abierto: {source_label}", scroll_idx=0,
-                             extra="Buscando posts en el DOM…")
-
-        log(f"[NAV] {_ts()} ⏳ Esperando que aparezcan posts en {source_label}…")
         try:
-            page.wait_for_selector(content_selector, timeout=12000)
-            initial_hrefs = page.locator(content_selector).count()
-            log(f"[NAV] {_ts()} ✓ Posts iniciales detectados en DOM: {initial_hrefs}")
-        except PlaywrightTimeoutError:
-            overlay_retry_actions = dismiss_transient_overlays(page, source_label=source_label, passes=2)
-            if overlay_retry_actions:
-                random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX,
-                             f"Reintentando tras cerrar overlays en {source_label}")
-                try:
-                    page.wait_for_selector(content_selector, timeout=8000)
-                    initial_hrefs = page.locator(content_selector).count()
-                    log(f"[NAV] {_ts()} ✓ Posts detectados tras limpiar overlays: {initial_hrefs}")
-                except PlaywrightTimeoutError:
+            context = build_context(browser)
+            page = context.new_page()
+            random_delay(DELAY_AFTER_NEW_PAGE_MIN, DELAY_AFTER_NEW_PAGE_MAX,
+                         f"Preparando pestaña nueva en {source_label}")
+
+            log(f"[NAV] {_ts()} ➡ Navegando a perfil: {profile_url}")
+            page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
+            save_live_screenshot(page, label=f"Cargando perfil {source_label}", scroll_idx=0,
+                                 extra="Esperando contenido inicial…")
+
+            # Espera aleatoria carga inicial del perfil
+            random_delay(DELAY_PROFILE_LOAD_MIN, DELAY_PROFILE_LOAD_MAX,
+                         f"Cargando perfil {source_label}")
+
+            overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
+            if overlay_actions == 0:
+                log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
+
+            random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX,
+                         f"Estabilizando vista del perfil {source_label}")
+
+            save_live_screenshot(page, label=f"Perfil abierto: {source_label}", scroll_idx=0,
+                                 extra="Buscando posts en el DOM…")
+
+            log(f"[NAV] {_ts()} ⏳ Esperando que aparezcan posts en {source_label}…")
+            try:
+                page.wait_for_selector(content_selector, timeout=12000)
+                initial_hrefs = page.locator(content_selector).count()
+                log(f"[NAV] {_ts()} ✓ Posts iniciales detectados en DOM: {initial_hrefs}")
+            except PlaywrightTimeoutError:
+                overlay_retry_actions = dismiss_transient_overlays(page, source_label=source_label, passes=2)
+                if overlay_retry_actions:
+                    random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX,
+                                 f"Reintentando tras cerrar overlays en {source_label}")
+                    try:
+                        page.wait_for_selector(content_selector, timeout=8000)
+                        initial_hrefs = page.locator(content_selector).count()
+                        log(f"[NAV] {_ts()} ✓ Posts detectados tras limpiar overlays: {initial_hrefs}")
+                    except PlaywrightTimeoutError:
+                        html_path, png_path = save_debug_artifacts(page, "sin_posts_visibles")
+                        log(f"[WARN] {_ts()} No aparecieron links visibles para el filtro {build_content_mode_label(content_mode)} en el timeout inicial.")
+                        log(f"[WARN] {_ts()} HTML guardado en: {html_path}")
+                        log(f"[WARN] {_ts()} Screenshot guardado en: {png_path}")
+                else:
                     html_path, png_path = save_debug_artifacts(page, "sin_posts_visibles")
                     log(f"[WARN] {_ts()} No aparecieron links visibles para el filtro {build_content_mode_label(content_mode)} en el timeout inicial.")
                     log(f"[WARN] {_ts()} HTML guardado en: {html_path}")
                     log(f"[WARN] {_ts()} Screenshot guardado en: {png_path}")
-            else:
-                html_path, png_path = save_debug_artifacts(page, "sin_posts_visibles")
-                log(f"[WARN] {_ts()} No aparecieron links visibles para el filtro {build_content_mode_label(content_mode)} en el timeout inicial.")
-                log(f"[WARN] {_ts()} HTML guardado en: {html_path}")
-                log(f"[WARN] {_ts()} Screenshot guardado en: {png_path}")
 
-        for scroll_idx in range(max_scrolls):
-            dismiss_transient_overlays(page, source_label=source_label, passes=1)
-            prev_found = len(found)
-            prev_candidates = len(candidates)
-            prev_accepted_candidates = accepted_candidates
-            added_this_scroll = 0
+            for scroll_idx in range(max_scrolls):
+                dismiss_transient_overlays(page, source_label=source_label, passes=1)
+                prev_found = len(found)
+                prev_candidates = len(candidates)
+                prev_accepted_candidates = accepted_candidates
+                added_this_scroll = 0
 
-            save_live_screenshot(
-                page,
-                label=f"Scroll {scroll_idx + 1}/{max_scrolls} — {source_label}",
-                scroll_idx=scroll_idx,
-                extra=f"Candidatos: {len(candidates)}/{target_label} | Detectados: {len(found)}",
-            )
-
-            hrefs = page.locator(content_selector).evaluate_all(
-                "(els) => els.map(e => e.getAttribute('href')).filter(Boolean)"
-            )
-
-            log(f"[SCROLL] {_ts()} 🔍 Scroll {scroll_idx + 1}/{max_scrolls} "
-                f"| hrefs en DOM: {len(hrefs)} | candidatos: {len(candidates)}/{target_label}")
-
-            for href in hrefs:
-                match = re.match(
-                    r"^(?:https?://(?:www\.)?instagram\.com)?/"
-                    r"(?:[^/]+/)?"
-                    r"(p|reel)/([A-Za-z0-9_-]+)/?",
-                    href,
+                save_live_screenshot(
+                    page,
+                    label=f"Scroll {scroll_idx + 1}/{max_scrolls} — {source_label}",
+                    scroll_idx=scroll_idx,
+                    extra=f"Candidatos: {len(candidates)}/{target_label} | Detectados: {len(found)}",
                 )
-                if not match:
-                    continue
 
-                kind = match.group(1)
-                shortcode = match.group(2)
-                if content_mode == "post" and kind != "p":
-                    continue
-                if content_mode == "reel" and kind != "reel":
-                    continue
-                if shortcode in found:
-                    continue
+                hrefs = page.locator(content_selector).evaluate_all(
+                    "(els) => els.map(e => e.getAttribute('href')).filter(Boolean)"
+                )
 
-                if not latest_visible_shortcode:
-                    latest_visible_shortcode = shortcode
-                    latest_visible_kind = kind
-                    log(f"[INFO] {_ts()} 📌 Primer post visible de {source_label}: {kind}:{shortcode}")
+                log(f"[SCROLL] {_ts()} 🔍 Scroll {scroll_idx + 1}/{max_scrolls} "
+                    f"| hrefs en DOM: {len(hrefs)} | candidatos: {len(candidates)}/{target_label}")
 
-                item = {
-                    "kind": kind,
-                    "shortcode": shortcode,
-                    "href": href,
-                    "post_datetime": "",
-                    "post_date": "",
-                }
-                found[shortcode] = item
+                for href in hrefs:
+                    match = re.match(
+                        r"^(?:https?://(?:www\.)?instagram\.com)?/"
+                        r"(?:[^/]+/)?"
+                        r"(p|reel)/([A-Za-z0-9_-]+)/?",
+                        href,
+                    )
+                    if not match:
+                        continue
 
-                if stop_at_shortcode and shortcode == stop_at_shortcode:
-                    stop_due_to_boundary = True
-                    log(f"[INFO] {_ts()} 🔖 Slug límite alcanzado → {kind}:{shortcode}. No hay más nuevos en esta fuente.")
-                    break
+                    kind = match.group(1)
+                    shortcode = match.group(2)
+                    if content_mode == "post" and kind != "p":
+                        continue
+                    if content_mode == "reel" and kind != "reel":
+                        continue
+                    if shortcode in found:
+                        continue
 
-                if shortcode in blocked:
-                    log(f"[SKIP] {_ts()} ♻ Ya procesado → {kind}:{shortcode}")
-                    continue
+                    if not latest_visible_shortcode:
+                        latest_visible_shortcode = shortcode
+                        latest_visible_kind = kind
+                        log(f"[INFO] {_ts()} 📌 Primer post visible de {source_label}: {kind}:{shortcode}")
 
-                if date_from or date_to:
-                    log(f"[DATE] {_ts()} 📆 Verificando fecha de post {kind}:{shortcode}…")
-                    post_datetime = fetch_post_datetime(context, kind, shortcode)
-                    post_date_value = parse_post_date_from_iso(post_datetime)
-                    item["post_datetime"] = post_datetime or ""
-                    item["post_date"] = post_date_value.isoformat() if post_date_value else ""
-                    log(f"[DATE] {_ts()} 🧾 Fecha post: {format_post_date_log(post_date_value, date_from, date_to)} | {kind}:{shortcode}")
+                    item = {
+                        "kind": kind,
+                        "shortcode": shortcode,
+                        "href": href,
+                        "post_datetime": "",
+                        "post_date": "",
+                    }
+                    found[shortcode] = item
 
-                    if item["post_date"] and item["post_date"] != last_logged_scan_date:
-                        last_logged_scan_date = item["post_date"]
-                        log(f"[DATE] {_ts()} 🗓 Scrapeando fecha {item['post_date']} en {source_label}…")
+                    if stop_at_shortcode and shortcode == stop_at_shortcode:
+                        stop_due_to_boundary = True
+                        log(f"[INFO] {_ts()} 🔖 Slug límite alcanzado → {kind}:{shortcode}. No hay más nuevos en esta fuente.")
+                        break
 
-                    if not post_date_value:
-                        log(
-                            f"[WARN] {_ts()} ⚠ Fecha no verificable para {kind}:{shortcode}. "
-                            f"No se marcará como fuera de rango; se mantiene elegible y no activa corte por fecha."
-                        )
-                    else:
-                        if should_stop_after_candidate(post_date_value, date_from):
-                            stop_due_to_date = True
+                    if shortcode in blocked:
+                        log(f"[SKIP] {_ts()} ♻ Ya procesado → {kind}:{shortcode}")
+                        continue
+
+                    if date_from or date_to:
+                        log(f"[DATE] {_ts()} 📆 Verificando fecha de post {kind}:{shortcode}…")
+                        post_datetime = fetch_post_datetime(context, kind, shortcode)
+                        post_date_value = parse_post_date_from_iso(post_datetime)
+                        item["post_datetime"] = post_datetime or ""
+                        item["post_date"] = post_date_value.isoformat() if post_date_value else ""
+                        log(f"[DATE] {_ts()} 🧾 Fecha post: {format_post_date_log(post_date_value, date_from, date_to)} | {kind}:{shortcode}")
+
+                        if item["post_date"] and item["post_date"] != last_logged_scan_date:
+                            last_logged_scan_date = item["post_date"]
+                            log(f"[DATE] {_ts()} 🗓 Scrapeando fecha {item['post_date']} en {source_label}…")
+
+                        if not post_date_value:
                             log(
-                                f"[STOP] {_ts()} 📅 Límite histórico alcanzado → {kind}:{shortcode} "
-                                f"| {format_post_date_log(post_date_value, date_from, date_to)}"
+                                f"[WARN] {_ts()} ⚠ Fecha no verificable para {kind}:{shortcode}. "
+                                f"No se marcará como fuera de rango; se mantiene elegible y no activa corte por fecha."
                             )
-                            break
+                        else:
+                            if should_stop_after_candidate(post_date_value, date_from):
+                                stop_due_to_date = True
+                                log(
+                                    f"[STOP] {_ts()} 📅 Límite histórico alcanzado → {kind}:{shortcode} "
+                                    f"| {format_post_date_log(post_date_value, date_from, date_to)}"
+                                )
+                                break
 
-                        if not match_post_date(post_date_value, date_from, date_to):
-                            log(
-                                f"[SKIP] {_ts()} 📅 Post fuera de rango de fechas → {kind}:{shortcode} "
-                                f"| {format_post_date_log(post_date_value, date_from, date_to)}"
-                            )
-                            continue
+                            if not match_post_date(post_date_value, date_from, date_to):
+                                log(
+                                    f"[SKIP] {_ts()} 📅 Post fuera de rango de fechas → {kind}:{shortcode} "
+                                    f"| {format_post_date_log(post_date_value, date_from, date_to)}"
+                                )
+                                continue
 
-                candidates.append(item)
-                added_this_scroll += 1
-                handled_now = True
-                if on_candidate is not None:
-                    try:
-                        handled_now = bool(on_candidate(item))
-                    except Exception as exc:
-                        handled_now = False
-                        log(f"[ERROR] {_ts()} ❌ Falló el manejo inmediato del candidato {kind}:{shortcode} → {exc}")
-                if handled_now:
-                    accepted_candidates += 1
+                    candidates.append(item)
+                    added_this_scroll += 1
+                    handled_now = True
+                    if on_candidate is not None:
+                        try:
+                            handled_now = bool(on_candidate(item))
+                        except Exception as exc:
+                            handled_now = False
+                            log(f"[ERROR] {_ts()} ❌ Falló el manejo inmediato del candidato {kind}:{shortcode} → {exc}")
+                    if handled_now:
+                        accepted_candidates += 1
+                    log(
+                        f"[OK] {_ts()} ✅ Candidato válido → {kind}:{shortcode}"
+                        + (f" | fecha={item['post_date']}" if item.get("post_date") else "")
+                        + (" | acción inmediata completada" if handled_now else " | acción inmediata no completada")
+                        + f" | candidatos válidos: {len(candidates)}/{target_label}"
+                        + f" | manejados: {accepted_candidates}/{target_label}"
+                    )
+
+                    if not collect_all_matching and target_new_count is not None and accepted_candidates >= target_new_count:
+                        break
+
                 log(
-                    f"[OK] {_ts()} ✅ Candidato válido → {kind}:{shortcode}"
-                    + (f" | fecha={item['post_date']}" if item.get("post_date") else "")
-                    + (" | acción inmediata completada" if handled_now else " | acción inmediata no completada")
-                    + f" | candidatos válidos: {len(candidates)}/{target_label}"
-                    + f" | manejados: {accepted_candidates}/{target_label}"
+                    f"[SCROLL] {_ts()} 📊 Resumen scroll {scroll_idx + 1}: "
+                    f"detectados={len(found)} | válidos={len(candidates)}/{target_label} | "
+                    f"manejados={accepted_candidates}/{target_label} | nuevos en este scroll={added_this_scroll} | sin-cambio-rondas={stale_rounds}"
                 )
 
+                if stop_due_to_boundary or stop_due_to_date:
+                    log(f"[STOP] {_ts()} 🛑 Deteniendo exploración de {source_label} (razón: {'boundary' if stop_due_to_boundary else 'fecha'})")
+                    break
                 if not collect_all_matching and target_new_count is not None and accepted_candidates >= target_new_count:
+                    log(f"[STOP] {_ts()} 🎯 Meta alcanzada ({accepted_candidates}/{target_label}) en {source_label}")
                     break
 
-            log(
-                f"[SCROLL] {_ts()} 📊 Resumen scroll {scroll_idx + 1}: "
-                f"detectados={len(found)} | válidos={len(candidates)}/{target_label} | "
-                f"manejados={accepted_candidates}/{target_label} | nuevos en este scroll={added_this_scroll} | sin-cambio-rondas={stale_rounds}"
-            )
+                if len(found) == prev_found and len(candidates) == prev_candidates and accepted_candidates == prev_accepted_candidates:
+                    stale_rounds += 1
+                    log(f"[SCROLL] {_ts()} ⚠ Sin nuevos posts (ronda sin cambios {stale_rounds}/{stale_round_limit})")
+                    save_live_screenshot(
+                        page,
+                        label=f"⚠ Sin nuevos posts — scroll {scroll_idx + 1}",
+                        scroll_idx=scroll_idx,
+                        extra=f"Ronda sin cambios: {stale_rounds}/{stale_round_limit} | DOM hrefs: {len(hrefs)}",
+                    )
+                else:
+                    stale_rounds = 0
 
-            if stop_due_to_boundary or stop_due_to_date:
-                log(f"[STOP] {_ts()} 🛑 Deteniendo exploración de {source_label} (razón: {'boundary' if stop_due_to_boundary else 'fecha'})")
-                break
-            if not collect_all_matching and target_new_count is not None and accepted_candidates >= target_new_count:
-                log(f"[STOP] {_ts()} 🎯 Meta alcanzada ({accepted_candidates}/{target_label}) en {source_label}")
-                break
+                if stale_rounds >= stale_round_limit:
+                    log(f"[WARN] {_ts()} 🛑 Sin nuevos posts tras {stale_round_limit} scrolls consecutivos en {source_label}. Terminando exploración.")
+                    save_live_screenshot(
+                        page,
+                        label=f"🛑 DETENIDO — sin nuevos posts en {source_label}",
+                        scroll_idx=scroll_idx,
+                        extra=f"{stale_round_limit} scrolls consecutivos sin cambios. DOM tiene {len(hrefs)} hrefs totales.",
+                    )
+                    break
 
-            if len(found) == prev_found and len(candidates) == prev_candidates and accepted_candidates == prev_accepted_candidates:
-                stale_rounds += 1
-                log(f"[SCROLL] {_ts()} ⚠ Sin nuevos posts (ronda sin cambios {stale_rounds}/{stale_round_limit})")
-                save_live_screenshot(
-                    page,
-                    label=f"⚠ Sin nuevos posts — scroll {scroll_idx + 1}",
-                    scroll_idx=scroll_idx,
-                    extra=f"Ronda sin cambios: {stale_rounds}/{stale_round_limit} | DOM hrefs: {len(hrefs)}",
-                )
-            else:
-                stale_rounds = 0
+                # Scroll y espera activa a que cargue contenido nuevo
+                dismiss_transient_overlays(page, source_label=source_label, passes=1)
+                log(f"[SCROLL] {_ts()} ↕ Ejecutando scroll en {source_label}…")
+                _scroll_profile_page(page, collect_all_matching=collect_all_matching)
 
-            if stale_rounds >= stale_round_limit:
-                log(f"[WARN] {_ts()} 🛑 Sin nuevos posts tras {stale_round_limit} scrolls consecutivos en {source_label}. Terminando exploración.")
-                save_live_screenshot(
-                    page,
-                    label=f"🛑 DETENIDO — sin nuevos posts en {source_label}",
-                    scroll_idx=scroll_idx,
-                    extra=f"{stale_round_limit} scrolls consecutivos sin cambios. DOM tiene {len(hrefs)} hrefs totales.",
-                )
-                break
+                # Espera activa: detecta si aparecen nuevos hrefs
+                new_href_count = _wait_for_new_content(page, len(hrefs), content_selector, timeout=DELAY_SCROLL_CONTENT_TIMEOUT)
+                if new_href_count > len(hrefs):
+                    log(f"[SCROLL] {_ts()} ✓ Nuevos elementos detectados en DOM tras scroll: {new_href_count} (antes: {len(hrefs)})")
+                    save_live_screenshot(
+                        page,
+                        label=f"✓ Nuevos posts cargados — scroll {scroll_idx + 1}",
+                        scroll_idx=scroll_idx,
+                        extra=f"DOM hrefs: {len(hrefs)} → {new_href_count}",
+                    )
+                else:
+                    log(f"[SCROLL] {_ts()} ℹ Sin nuevos elementos tras scroll (DOM estable: {new_href_count})")
+                    save_live_screenshot(
+                        page,
+                        label=f"ℹ DOM estable tras scroll {scroll_idx + 1}",
+                        scroll_idx=scroll_idx,
+                        extra=f"hrefs en DOM: {new_href_count} (sin cambio)",
+                    )
 
-            # Scroll y espera activa a que cargue contenido nuevo
-            dismiss_transient_overlays(page, source_label=source_label, passes=1)
-            log(f"[SCROLL] {_ts()} ↕ Ejecutando scroll en {source_label}…")
-            _scroll_profile_page(page, collect_all_matching=collect_all_matching)
-
-            # Espera activa: detecta si aparecen nuevos hrefs
-            new_href_count = _wait_for_new_content(page, len(hrefs), content_selector, timeout=DELAY_SCROLL_CONTENT_TIMEOUT)
-            if new_href_count > len(hrefs):
-                log(f"[SCROLL] {_ts()} ✓ Nuevos elementos detectados en DOM tras scroll: {new_href_count} (antes: {len(hrefs)})")
-                save_live_screenshot(
-                    page,
-                    label=f"✓ Nuevos posts cargados — scroll {scroll_idx + 1}",
-                    scroll_idx=scroll_idx,
-                    extra=f"DOM hrefs: {len(hrefs)} → {new_href_count}",
-                )
-            else:
-                log(f"[SCROLL] {_ts()} ℹ Sin nuevos elementos tras scroll (DOM estable: {new_href_count})")
-                save_live_screenshot(
-                    page,
-                    label=f"ℹ DOM estable tras scroll {scroll_idx + 1}",
-                    scroll_idx=scroll_idx,
-                    extra=f"hrefs en DOM: {new_href_count} (sin cambio)",
-                )
-
-            # Pausa aleatoria adicional entre scrolls
-            random_delay(DELAY_AFTER_SCROLL_MIN, DELAY_AFTER_SCROLL_MAX,
-                         f"Espera entre scrolls en {source_label}")
+                # Pausa aleatoria adicional entre scrolls
+                random_delay(DELAY_AFTER_SCROLL_MIN, DELAY_AFTER_SCROLL_MAX,
+                             f"Espera entre scrolls en {source_label}")
 
 
-        log_section(f"FIN EXTRACCIÓN: {source_label} — {accepted_candidates} manejados / {len(candidates)} candidatos / {len(found)} detectados")
-        browser.close()
-
+            log_section(f"FIN EXTRACCIÓN: {source_label} — {accepted_candidates} manejados / {len(candidates)} candidatos / {len(found)} detectados")
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
     return {
         "posts": candidates,
         "latest_visible_shortcode": latest_visible_shortcode,
