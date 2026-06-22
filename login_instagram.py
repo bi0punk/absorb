@@ -15,6 +15,9 @@ with sync_playwright() as p:
     print("Cuando ya estés dentro del feed o perfil, presiona ENTER aquí en la terminal...\n")
     input()
 
+    # ⚠️ SECURITY WARNING: ig_state.json contains Instagram session cookies.
+    # This file grants full access to the authenticated Instagram session.
+    # Treat it like a password — never commit, share, or expose it.
     context.storage_state(path=STATE_FILE)
     print(f"[OK] Estado guardado en {STATE_FILE}")
 
