@@ -567,4 +567,4 @@ if __name__ == "__main__":
     print("  Instagram Scraper Dashboard")
     print("  http://localhost:5000")
     print("=" * 60)
-    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
+    app.run(debug=False, host="127.0.0.1", port=5000, threaded=True)

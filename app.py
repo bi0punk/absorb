@@ -905,7 +905,11 @@ def find_analysis_path(shortcode: str, statuses: Optional[Iterable[str]] = None)
     try:
         with get_registry_connection() as conn:
             if statuses:
-                placeholders = ",".join("?" for _ in statuses)
+                allowed_statuses = {"processed", "downloaded", "pending", "failed", "skipped"}
+                safe_statuses = [s for s in statuses if s in allowed_statuses]
+                if not safe_statuses:
+                    return None
+                placeholders = ",".join("?" for _ in safe_statuses)
                 registry_row = conn.execute(
                     f"""
                     SELECT analysis_json_path
@@ -914,7 +918,7 @@ def find_analysis_path(shortcode: str, statuses: Optional[Iterable[str]] = None)
                     ORDER BY last_seen_at DESC
                     LIMIT 1
                     """,
-                    (shortcode, *tuple(statuses)),
+                    (shortcode, *tuple(safe_statuses)),
                 ).fetchone()
             else:
                 registry_row = conn.execute(
@@ -1405,7 +1409,7 @@ def navigate_profile_with_arrow(
             overlay_actions = dismiss_transient_overlays(page, source_label=source_label, passes=OVERLAY_DISMISS_PASSES)
             if overlay_actions == 0:
                 log(f"[NAV] {_ts()} ℹ Sin banners/modales visibles al abrir {source_label}.")
-            random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, f"Estabilizando perfil")
+            random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, "Estabilizando perfil")
 
             # Esperar a que aparezcan posts en el grid
             GRID_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]'
@@ -2329,7 +2333,7 @@ def write_scrape_summary_log(
     summary_lines = [
         "",
         "═" * 70,
-        f"  RESUMEN DE EJECUCIÓN",
+        "  RESUMEN DE EJECUCIÓN",
         "═" * 70,
         f"  Inicio       : {run_start_iso}",
         f"  Fin          : {run_end_iso}",
