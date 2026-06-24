@@ -26,12 +26,14 @@ from flask import (
     send_file,
 )
 
-from app import (
+from absorb.sources import (
     build_content_mode_label,
     build_source_metadata,
-    parse_compact_date,
     parse_content_mode,
     parse_source_jobs,
+)
+from absorb.dates import (
+    parse_compact_date,
 )
 
 # ── Config ─────────────────────────────────────────────────────────────────────
