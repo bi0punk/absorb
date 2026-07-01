@@ -29,13 +29,15 @@ python scheduler.py
 ## Structure
 
 ```
-absorb/
+.
+├── absorb/             # Core package (sources, dates, registry, state, utils)
 ├── app.py              # Main scraper
 ├── web.py              # Flask web viewer
 ├── scheduler.py        # Periodic scheduler
 ├── login_instagram.py  # Instagram auth helper
 ├── requirements.txt
-└── templates/
+├── templates/          # Flask templates (index, detail, login, base)
+└── tests/              # Pytest suite
 ```
 
 ## License
