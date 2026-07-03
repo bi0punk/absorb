@@ -1,13 +1,15 @@
 from datetime import date
+
 import pytest
+
 from absorb.dates import (
-    parse_iso_date,
-    parse_compact_date,
-    validate_date_range,
-    parse_post_date_from_iso,
-    match_post_date,
-    should_stop_after_candidate,
     build_mode_label,
+    match_post_date,
+    parse_compact_date,
+    parse_iso_date,
+    parse_post_date_from_iso,
+    should_stop_after_candidate,
+    validate_date_range,
 )
 
 

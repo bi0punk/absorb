@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from . import constants
 
@@ -9,7 +9,7 @@ def read_json(path: Path, default: Any = None) -> Any:
     if not path.exists():
         return default
     try:
-        with open(str(path), "r", encoding="utf-8") as f:
+        with open(str(path), encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return default
@@ -21,15 +21,15 @@ def write_json(path: Path, data: Any) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def load_source_state() -> Dict[str, Dict]:
+def load_source_state() -> dict[str, dict]:
     return read_json(constants.SOURCE_STATE_FILE, {})
 
 
-def save_source_state(data: Dict[str, Dict]) -> None:
+def save_source_state(data: dict[str, dict]) -> None:
     write_json(constants.SOURCE_STATE_FILE, data)
 
 
-def get_source_state_entry(profile_url: str) -> Dict:
+def get_source_state_entry(profile_url: str) -> dict:
     state = load_source_state()
     return state.get(profile_url, {})
 
@@ -64,9 +64,9 @@ def update_source_state(
     save_source_state(state)
 
 
-def merge_payloads(existing: List[Dict], new_items: List[Dict]) -> List[Dict]:
+def merge_payloads(existing: list[dict], new_items: list[dict]) -> list[dict]:
     seen: set = set()
-    result: List[Dict] = []
+    result: list[dict] = []
     for item in existing + new_items:
         shortcode = item.get("shortcode", "")
         if shortcode and shortcode not in seen:
@@ -75,7 +75,7 @@ def merge_payloads(existing: List[Dict], new_items: List[Dict]) -> List[Dict]:
     return result
 
 
-def estimate_max_scrolls(target_new_count: Optional[int], collect_all: bool) -> int:
+def estimate_max_scrolls(target_new_count: int | None, collect_all: bool) -> int:
     if collect_all or target_new_count is None:
         return 200
     return min(target_new_count * 3, 200)

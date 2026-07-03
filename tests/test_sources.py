@@ -1,18 +1,17 @@
-import pytest
 from absorb.sources import (
-    normalize_profile_url,
-    extract_source_username,
-    build_source_metadata,
-    sanitize_source_dirname,
-    parse_positive_limit,
-    parse_content_mode,
     build_content_mode_label,
+    build_source_metadata,
+    extract_source_username,
     get_profile_link_selector,
-    split_raw_source_entries,
+    normalize_profile_url,
+    parse_cli_jobs,
+    parse_cli_sources_and_limit,
+    parse_content_mode,
+    parse_positive_limit,
     parse_profile_sources,
     parse_source_jobs,
-    parse_cli_sources_and_limit,
-    parse_cli_jobs,
+    sanitize_source_dirname,
+    split_raw_source_entries,
 )
 
 

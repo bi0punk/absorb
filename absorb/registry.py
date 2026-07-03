@@ -1,7 +1,8 @@
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any
 
 from . import constants
 
@@ -34,7 +35,7 @@ def init_registry() -> None:
     conn.close()
 
 
-def find_post_dir_in_registry(shortcode: str) -> Optional[Path]:
+def find_post_dir_in_registry(shortcode: str) -> Path | None:
     conn = get_registry_connection()
     row = conn.execute(
         "SELECT post_dir FROM processed_posts WHERE shortcode = ?", (shortcode,)
@@ -43,14 +44,14 @@ def find_post_dir_in_registry(shortcode: str) -> Optional[Path]:
     return Path(row["post_dir"]) if row else None
 
 
-def find_post_dir_on_disk(shortcode: str) -> Optional[Path]:
+def find_post_dir_on_disk(shortcode: str) -> Path | None:
     for p in constants.BASE_DIR.rglob(f"*{shortcode}"):
         if p.is_dir():
             return p
     return None
 
 
-def locate_post_dir(shortcode: str) -> Optional[Path]:
+def locate_post_dir(shortcode: str) -> Path | None:
     return find_post_dir_in_registry(shortcode) or find_post_dir_on_disk(shortcode)
 
 
@@ -68,13 +69,13 @@ def read_json_file(path: Path) -> Any:
     if not path.exists():
         return None
     try:
-        with open(str(path), "r", encoding="utf-8") as f:
+        with open(str(path), encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def infer_payload_status(payload: Optional[Dict]) -> str:
+def infer_payload_status(payload: dict | None) -> str:
     if payload is None:
         return ""
     status = payload.get("status", "")
@@ -82,8 +83,8 @@ def infer_payload_status(payload: Optional[Dict]) -> str:
 
 
 def find_analysis_path(
-    shortcode: str, statuses: Optional[Iterable[str]] = None
-) -> Optional[Path]:
+    shortcode: str, statuses: Iterable[str] | None = None
+) -> Path | None:
     for p in constants.BASE_DIR.rglob(f"{shortcode}{constants.ANALYSIS_SUFFIX}"):
         if p.is_file():
             return p
@@ -142,7 +143,7 @@ def bootstrap_registry_from_disk() -> int:
     return count
 
 
-def load_processed_shortcodes() -> Set[str]:
+def load_processed_shortcodes() -> set[str]:
     conn = get_registry_connection()
     rows = conn.execute(
         "SELECT shortcode FROM processed_posts WHERE status = 'processed'"
@@ -151,16 +152,16 @@ def load_processed_shortcodes() -> Set[str]:
     return {r["shortcode"] for r in rows}
 
 
-def find_payload(shortcode: str, statuses: Optional[Iterable[str]] = None) -> Optional[Dict]:
+def find_payload(shortcode: str, statuses: Iterable[str] | None = None) -> dict | None:
     analysis_path = find_analysis_path(shortcode, statuses)
     if not analysis_path:
         return None
     return read_json_file(analysis_path)
 
 
-def find_cached_payload(shortcode: str) -> Optional[Dict]:
+def find_cached_payload(shortcode: str) -> dict | None:
     return find_payload(shortcode, ["processed"])
 
 
-def find_downloaded_payload(shortcode: str) -> Optional[Dict]:
+def find_downloaded_payload(shortcode: str) -> dict | None:
     return find_payload(shortcode, ["downloaded"])

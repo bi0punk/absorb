@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import builtins
+import contextlib
 import json
 import os
 import random
@@ -10,14 +10,15 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+from collections.abc import Callable, Iterable
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from zoneinfo import ZoneInfo
 
 import cv2
 import pytesseract
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 # ── Directorios y archivos ────────────────────────────────────────────────────
 BASE_DIR = Path("data_instagram")
@@ -50,7 +51,7 @@ _HEADLESS_RAW = os.environ.get("SCRAPER_HEADLESS", "").strip()
 BROWSER_HEADLESS: bool = _HEADLESS_RAW in ("1", "true", "yes")
 
 _LIVE_SCREENSHOT_RAW = os.environ.get("SCRAPER_SCREENSHOT_DIR", "").strip()
-LIVE_SCREENSHOT_DIR: Optional[Path] = Path(_LIVE_SCREENSHOT_RAW).expanduser() if _LIVE_SCREENSHOT_RAW else None
+LIVE_SCREENSHOT_DIR: Path | None = Path(_LIVE_SCREENSHOT_RAW).expanduser() if _LIVE_SCREENSHOT_RAW else None
 
 # ── Tiempos de espera (segundos) ──────────────────────────────────────────────
 # Entre fuentes de scraping
@@ -108,7 +109,7 @@ def print(*args, **kwargs):
 
 def _ts() -> str:
     """Timestamp compacto UTC para logs."""
-    return datetime.now(timezone.utc).strftime("%H:%M:%S")
+    return datetime.now(UTC).strftime("%H:%M:%S")
 
 
 def append_manual_log(message: str) -> None:
@@ -140,14 +141,14 @@ def log_section(title: str) -> None:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def local_today() -> date:
     return datetime.now(APP_TZ).date()
 
 
-def build_effective_date_bounds(date_from: Optional[date], date_to: Optional[date]) -> Tuple[Optional[date], Optional[date]]:
+def build_effective_date_bounds(date_from: date | None, date_to: date | None) -> tuple[date | None, date | None]:
     lower = date_from
     upper = date_to
     if lower and not upper:
@@ -155,7 +156,7 @@ def build_effective_date_bounds(date_from: Optional[date], date_to: Optional[dat
     return lower, upper
 
 
-def format_post_date_log(post_date_value: Optional[date], date_from: Optional[date], date_to: Optional[date]) -> str:
+def format_post_date_log(post_date_value: date | None, date_from: date | None, date_to: date | None) -> str:
     lower, upper = build_effective_date_bounds(date_from, date_to)
     within = match_post_date(post_date_value, date_from, date_to) if post_date_value else False
     parts = [
@@ -167,7 +168,7 @@ def format_post_date_log(post_date_value: Optional[date], date_from: Optional[da
     return ' | '.join(parts)
 
 
-def existing_post_label(payload: Dict, shortcode: str) -> str:
+def existing_post_label(payload: dict, shortcode: str) -> str:
     image_path = str(payload.get('image_path', '') or '').strip()
     post_dir = str(payload.get('post_dir', '') or '').strip()
     processed_at = str(payload.get('processed_at', '') or '').strip()
@@ -185,7 +186,7 @@ def recover_existing_payload(
     profile_url: str = '',
     post_datetime: str = '',
     post_date: str = '',
-) -> Optional[Tuple[str, Dict]]:
+) -> tuple[str, dict] | None:
     cached_payload = find_cached_payload(shortcode)
     if cached_payload:
         return 'processed_cache', cached_payload
@@ -348,7 +349,7 @@ def extract_source_username(profile_url: str) -> str:
     return value.strip().strip("/").lower()
 
 
-def build_source_metadata(profile_url: str) -> Dict[str, str]:
+def build_source_metadata(profile_url: str) -> dict[str, str]:
     normalized_url = normalize_profile_url(profile_url) if profile_url else ""
     username = extract_source_username(normalized_url or profile_url)
     return {
@@ -417,8 +418,8 @@ def get_profile_link_selector(content_mode: str) -> str:
     return 'a[href*="/p/"], a[href*="/reel/"]'
 
 
-def split_raw_source_entries(raw_values: Iterable[str]) -> List[str]:
-    items: List[str] = []
+def split_raw_source_entries(raw_values: Iterable[str]) -> list[str]:
+    items: list[str] = []
     for raw in raw_values:
         if raw is None:
             continue
@@ -430,9 +431,9 @@ def split_raw_source_entries(raw_values: Iterable[str]) -> List[str]:
     return items
 
 
-def parse_profile_sources(raw_values: Iterable[str]) -> List[str]:
-    normalized: List[str] = []
-    seen: Set[str] = set()
+def parse_profile_sources(raw_values: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
 
     for part in split_raw_source_entries(raw_values):
         url = normalize_profile_url(part)
@@ -444,8 +445,8 @@ def parse_profile_sources(raw_values: Iterable[str]) -> List[str]:
     return normalized
 
 
-def parse_source_jobs(raw_values: Iterable[str], default_limit: int = DEFAULT_LIMIT) -> List[Dict[str, int | str]]:
-    jobs_by_url: Dict[str, Dict[str, int | str]] = {}
+def parse_source_jobs(raw_values: Iterable[str], default_limit: int = DEFAULT_LIMIT) -> list[dict[str, int | str]]:
+    jobs_by_url: dict[str, dict[str, int | str]] = {}
     default_limit = parse_positive_limit(default_limit, DEFAULT_LIMIT)
 
     for token in split_raw_source_entries(raw_values):
@@ -473,7 +474,7 @@ def format_source_job_arg(profile_url: str, limit: int) -> str:
     return f"{normalize_profile_url(profile_url)}={parse_positive_limit(limit)}"
 
 
-def parse_cli_sources_and_limit(argv: List[str]) -> Tuple[List[str], int]:
+def parse_cli_sources_and_limit(argv: list[str]) -> tuple[list[str], int]:
     if not argv:
         return [], DEFAULT_LIMIT
 
@@ -491,7 +492,7 @@ def parse_cli_sources_and_limit(argv: List[str]) -> Tuple[List[str], int]:
     return parse_profile_sources(raw_sources), parse_positive_limit(limit)
 
 
-def parse_cli_jobs(argv: List[str]) -> Tuple[List[Dict[str, int | str]], Optional[int], str]:
+def parse_cli_jobs(argv: list[str]) -> tuple[list[dict[str, int | str]], int | None, str]:
     if not argv:
         return [], None, "per_source"
 
@@ -504,7 +505,7 @@ def parse_cli_jobs(argv: List[str]) -> Tuple[List[Dict[str, int | str]], Optiona
     return jobs, limit, "shared_total"
 
 
-def parse_iso_date(raw_value: str | None) -> Optional[date]:
+def parse_iso_date(raw_value: str | None) -> date | None:
     value = str(raw_value or "").strip()
     if not value:
         return None
@@ -514,7 +515,7 @@ def parse_iso_date(raw_value: str | None) -> Optional[date]:
         raise ValueError(f"Fecha inválida: {value}. Usa formato YYYY-MM-DD.") from exc
 
 
-def parse_compact_date(raw_value: str | None) -> Optional[date]:
+def parse_compact_date(raw_value: str | None) -> date | None:
     value = str(raw_value or "").strip()
     if not value:
         return None
@@ -524,12 +525,12 @@ def parse_compact_date(raw_value: str | None) -> Optional[date]:
         raise ValueError(f"Fecha inválida: {value}. Usa formato ddmmaa, por ejemplo 010326.") from exc
 
 
-def validate_date_range(date_from: Optional[date], date_to: Optional[date]) -> None:
+def validate_date_range(date_from: date | None, date_to: date | None) -> None:
     if date_from and date_to and date_from > date_to:
         raise ValueError("La fecha desde no puede ser mayor que la fecha hasta.")
 
 
-def parse_post_date_from_iso(raw_value: str | None) -> Optional[date]:
+def parse_post_date_from_iso(raw_value: str | None) -> date | None:
     value = str(raw_value or "").strip()
     if not value:
         return None
@@ -539,23 +540,21 @@ def parse_post_date_from_iso(raw_value: str | None) -> Optional[date]:
         return None
 
 
-def match_post_date(post_date_value: Optional[date], date_from: Optional[date], date_to: Optional[date]) -> bool:
+def match_post_date(post_date_value: date | None, date_from: date | None, date_to: date | None) -> bool:
     if not post_date_value:
         return False
     if date_from and post_date_value < date_from:
         return False
-    if date_to and post_date_value > date_to:
-        return False
-    return True
+    return not (date_to and post_date_value > date_to)
 
 
-def should_stop_after_candidate(post_date_value: Optional[date], date_from: Optional[date]) -> bool:
+def should_stop_after_candidate(post_date_value: date | None, date_from: date | None) -> bool:
     if not post_date_value:
         return False
     return bool(date_from and post_date_value < date_from)
 
 
-def build_mode_label(date_from: Optional[date], date_to: Optional[date]) -> str:
+def build_mode_label(date_from: date | None, date_to: date | None) -> str:
     if date_from and date_to:
         return f"entre {date_from.isoformat()} y {date_to.isoformat()}"
     if date_from:
@@ -565,7 +564,7 @@ def build_mode_label(date_from: Optional[date], date_to: Optional[date]) -> str:
     return "solo nuevos"
 
 
-def build_source_execution_label(job: Dict[str, int | str], collect_all_by_date: bool = False, scheduler_all_new: bool = False) -> str:
+def build_source_execution_label(job: dict[str, int | str], collect_all_by_date: bool = False, scheduler_all_new: bool = False) -> str:
     source_meta = build_source_metadata(str(job.get("profile_url", "")))
     source_label = source_meta.get("source_label") or str(job.get("profile_url", ""))
     if collect_all_by_date:
@@ -577,7 +576,7 @@ def build_source_execution_label(job: Dict[str, int | str], collect_all_by_date:
 
 # ── Fechas de posts individuales ──────────────────────────────────────────────
 
-def fetch_post_datetime(context, kind: str, shortcode: str) -> Optional[str]:
+def fetch_post_datetime(context, kind: str, shortcode: str) -> str | None:
     post_url = (
         f"https://www.instagram.com/{kind}/{shortcode}/"
         if kind == "reel"
@@ -634,10 +633,7 @@ def fetch_post_datetime(context, kind: str, shortcode: str) -> Optional[str]:
             )
         if html_match:
             raw = html_match.group(1)
-            if raw.isdigit() and len(raw) == 10:
-                result = datetime.fromtimestamp(int(raw), tz=timezone.utc).isoformat()
-            else:
-                result = raw
+            result = datetime.fromtimestamp(int(raw), tz=UTC).isoformat() if raw.isdigit() and len(raw) == 10 else raw
             log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result} | selector=html-fallback")
             return result
 
@@ -704,7 +700,7 @@ def dismiss_cookie_banner(page) -> bool:
     return False
 
 
-def _click_first_visible_selector(page, selectors: List[str], description: str, wait_after: float = DELAY_AFTER_MODAL_CLOSE) -> bool:
+def _click_first_visible_selector(page, selectors: list[str], description: str, wait_after: float = DELAY_AFTER_MODAL_CLOSE) -> bool:
     """Hace click en el primer selector visible. Devuelve True si actuó."""
     for selector in selectors:
         try:
@@ -819,7 +815,7 @@ def init_registry() -> None:
         conn.commit()
 
 
-def find_post_dir_in_registry(shortcode: str) -> Optional[Path]:
+def find_post_dir_in_registry(shortcode: str) -> Path | None:
     try:
         with get_registry_connection() as conn:
             row = conn.execute(
@@ -852,14 +848,14 @@ def find_post_dir_in_registry(shortcode: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
-def find_post_dir_on_disk(shortcode: str) -> Optional[Path]:
+def find_post_dir_on_disk(shortcode: str) -> Path | None:
     for candidate in BASE_DIR.rglob(f"-{shortcode}"):
         if candidate.is_dir():
             return candidate
     return None
 
 
-def locate_post_dir(shortcode: str) -> Optional[Path]:
+def locate_post_dir(shortcode: str) -> Path | None:
     return find_post_dir_in_registry(shortcode) or find_post_dir_on_disk(shortcode)
 
 
@@ -887,7 +883,7 @@ def read_json_file(path: Path):
         return None
 
 
-def infer_payload_status(payload: Optional[Dict]) -> str:
+def infer_payload_status(payload: dict | None) -> str:
     if not isinstance(payload, dict):
         return ""
     has_ocr = bool(str(payload.get("ocr_best", "") or "").strip() or str(payload.get("processed_at", "") or "").strip())
@@ -899,7 +895,7 @@ def infer_payload_status(payload: Optional[Dict]) -> str:
     return ""
 
 
-def find_analysis_path(shortcode: str, statuses: Optional[Iterable[str]] = None) -> Optional[Path]:
+def find_analysis_path(shortcode: str, statuses: Iterable[str] | None = None) -> Path | None:
     registry_row = None
     try:
         with get_registry_connection() as conn:
@@ -1054,7 +1050,7 @@ def bootstrap_registry_from_disk() -> int:
     return synced
 
 
-def load_processed_shortcodes() -> Set[str]:
+def load_processed_shortcodes() -> set[str]:
     with get_registry_connection() as conn:
         rows = conn.execute(
             """
@@ -1066,14 +1062,14 @@ def load_processed_shortcodes() -> Set[str]:
     return {row["shortcode"] for row in rows if row["shortcode"]}
 
 
-def find_payload(shortcode: str, statuses: Optional[Iterable[str]] = None) -> Optional[Dict]:
+def find_payload(shortcode: str, statuses: Iterable[str] | None = None) -> dict | None:
     analysis_path = find_analysis_path(shortcode, statuses=statuses)
     if not analysis_path:
         return None
     return read_json_file(analysis_path)
 
 
-def find_cached_payload(shortcode: str) -> Optional[Dict]:
+def find_cached_payload(shortcode: str) -> dict | None:
     payload = find_payload(shortcode, statuses=("processed",))
     if not payload:
         return None
@@ -1082,7 +1078,7 @@ def find_cached_payload(shortcode: str) -> Optional[Dict]:
     return payload
 
 
-def find_downloaded_payload(shortcode: str) -> Optional[Dict]:
+def find_downloaded_payload(shortcode: str) -> dict | None:
     payload = find_payload(shortcode, statuses=("downloaded", "processed"))
     if not payload:
         return None
@@ -1099,17 +1095,17 @@ def find_downloaded_payload(shortcode: str) -> Optional[Dict]:
 
 # ── Estado por fuente ─────────────────────────────────────────────────────────
 
-def load_source_state() -> Dict[str, Dict]:
+def load_source_state() -> dict[str, dict]:
     data = read_json_file(SOURCE_STATE_FILE)
     return data if isinstance(data, dict) else {}
 
 
-def save_source_state(data: Dict[str, Dict]) -> None:
+def save_source_state(data: dict[str, dict]) -> None:
     BASE_DIR.mkdir(parents=True, exist_ok=True)
     SOURCE_STATE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def get_source_state_entry(profile_url: str) -> Dict:
+def get_source_state_entry(profile_url: str) -> dict:
     key = normalize_profile_url(profile_url)
     state = load_source_state()
     entry = state.get(key)
@@ -1167,8 +1163,8 @@ def update_source_state(profile_url: str, latest_visible_shortcode: str = "", la
     save_source_state(state)
 
 
-def merge_payloads(existing: List[Dict], new_items: List[Dict]) -> List[Dict]:
-    merged: Dict[str, Dict] = {}
+def merge_payloads(existing: list[dict], new_items: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
 
     for item in existing:
         shortcode = item.get("shortcode")
@@ -1180,14 +1176,14 @@ def merge_payloads(existing: List[Dict], new_items: List[Dict]) -> List[Dict]:
         if shortcode:
             merged[shortcode] = item
 
-    def sort_key(item: Dict):
+    def sort_key(item: dict):
         ts = item.get("processed_at") or item.get("updated_at") or ""
         return (ts, item.get("shortcode", ""))
 
     return sorted(merged.values(), key=sort_key, reverse=True)
 
 
-def estimate_max_scrolls(target_new_count: Optional[int], collect_all: bool = False) -> int:
+def estimate_max_scrolls(target_new_count: int | None, collect_all: bool = False) -> int:
     if collect_all or target_new_count is None:
         return 600
     target = max(1, int(target_new_count))
@@ -1267,7 +1263,7 @@ def click_next_post_arrow(page, current_shortcode: str) -> bool:
     return False
 
 
-def detect_carousel_from_modal(page) -> Tuple[bool, int]:
+def detect_carousel_from_modal(page) -> tuple[bool, int]:
     """
     Detecta si el post abierto en el modal es un carrusel y cuántas imágenes tiene.
     Retorna (is_carousel: bool, image_count: int).
@@ -1309,7 +1305,7 @@ def detect_carousel_from_modal(page) -> Tuple[bool, int]:
     return False, 1
 
 
-def get_post_info_from_modal(page) -> Optional[Dict]:
+def get_post_info_from_modal(page) -> dict | None:
     """
     Extrae la información del post actualmente abierto en el modal de Instagram:
     kind, shortcode, datetime, date, is_carousel, image_count.
@@ -1324,7 +1320,7 @@ def get_post_info_from_modal(page) -> Optional[Dict]:
     shortcode = m.group(2)
 
     # Obtener fecha del elemento <time datetime="...">
-    post_datetime: Optional[str] = None
+    post_datetime: str | None = None
     try:
         page.wait_for_selector("time[datetime]", timeout=6000)
         post_datetime = (page.locator("time[datetime]").first.get_attribute("datetime") or "").strip() or None
@@ -1337,7 +1333,7 @@ def get_post_info_from_modal(page) -> Optional[Dict]:
             html = page.content()
             tm = re.search(r'"taken_at"\s*:\s*(\d{10})', html)
             if tm:
-                post_datetime = datetime.fromtimestamp(int(tm.group(1)), tz=timezone.utc).isoformat()
+                post_datetime = datetime.fromtimestamp(int(tm.group(1)), tz=UTC).isoformat()
         except Exception:
             pass
 
@@ -1360,10 +1356,10 @@ def get_post_info_from_modal(page) -> Optional[Dict]:
 def navigate_profile_with_arrow(
     profile_url: str,
     date_from: date,
-    date_to: Optional[date] = None,
+    date_to: date | None = None,
     content_mode: str = "both",
-    on_candidate: Optional[Callable[[Dict], bool]] = None,
-) -> Dict:
+    on_candidate: Callable[[dict], bool] | None = None,
+) -> dict:
     """
     Navega un perfil de Instagram usando la flecha nativa (→) para pasar post a post.
     - Si el post es un reel y content_mode='post', lo salta con la flecha.
@@ -1371,7 +1367,7 @@ def navigate_profile_with_arrow(
     - Detecta carruseles (posts con más de una imagen).
     Retorna dict con posts candidatos y metadatos de la ejecución.
     """
-    candidates: List[Dict] = []
+    candidates: list[dict] = []
     accepted_candidates = 0
     stop_due_to_date = False
     latest_visible_shortcode = ""
@@ -1519,10 +1515,8 @@ def navigate_profile_with_arrow(
                 f"{accepted_candidates} aceptados / {len(candidates)} candidatos / {post_index} visitados"
             )
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 browser.close()
-            except Exception:
-                pass
 
     return {
         "posts": candidates,
@@ -1545,7 +1539,7 @@ def build_post_url(kind: str, shortcode: str) -> str:
     )
 
 
-def write_analysis_payload(post_dir: Path, shortcode: str, payload: Dict) -> Path:
+def write_analysis_payload(post_dir: Path, shortcode: str, payload: dict) -> Path:
     out_json = post_dir / f"{shortcode}{ANALYSIS_SUFFIX}"
     out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return out_json
@@ -1589,7 +1583,7 @@ def run_instaloader_for_shortcode(kind: str, shortcode: str, profile_url: str = 
     return outdir
 
 
-def find_latest_image(post_dir: Path) -> Optional[Path]:
+def find_latest_image(post_dir: Path) -> Path | None:
     candidates = []
     for pattern in ("*.jpg", "*.jpeg", "*.png"):
         candidates.extend(post_dir.glob(pattern))
@@ -1631,7 +1625,7 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def run_ocr(image_path: Path) -> Dict:
+def run_ocr(image_path: Path) -> dict:
     log(f"[OCR] {_ts()} 🔎 Ejecutando OCR sobre: {image_path.name}")
     original, processed = preprocess_image(str(image_path))
 
@@ -1663,12 +1657,12 @@ def build_download_payload(
     profile_url: str = "",
     post_datetime: str = "",
     post_date: str = "",
-    post_dir: Optional[Path] = None,
-    image_path: Optional[Path] = None,
+    post_dir: Path | None = None,
+    image_path: Path | None = None,
     caption: str = "",
     is_carousel: bool = False,
     image_count: int = 1,
-) -> Dict:
+) -> dict:
     source_meta = build_source_metadata(profile_url)
     safe_post_dir = post_dir or expected_post_dir(shortcode, profile_url=profile_url)
     safe_image_path = image_path or find_latest_image(safe_post_dir)
@@ -1705,7 +1699,7 @@ def download_shortcode(
     post_date: str = "",
     is_carousel: bool = False,
     image_count: int = 1,
-) -> Dict:
+) -> dict:
     post_url = build_post_url(kind, shortcode)
     log(f"[POST] {_ts()} 📥 Preparando descarga {kind}:{shortcode} | URL: {post_url}")
 
@@ -1755,7 +1749,7 @@ def download_shortcode(
     return payload
 
 
-def enrich_payload_with_ocr(payload: Dict) -> Dict:
+def enrich_payload_with_ocr(payload: dict) -> dict:
     shortcode = str(payload.get("shortcode", "") or "").strip()
     if not shortcode:
         raise ValueError("Payload sin shortcode para OCR.")
@@ -1802,7 +1796,7 @@ def download_shortcode_with_retry(
     post_date: str = "",
     is_carousel: bool = False,
     image_count: int = 1,
-) -> Dict:
+) -> dict:
     last_exc: Exception = RuntimeError("Sin reintentos de descarga")
     for attempt in range(1, MAX_RETRIES_PER_POST + 2):
         try:
@@ -1821,7 +1815,7 @@ def download_shortcode_with_retry(
     raise last_exc
 
 
-def ocr_payload_with_retry(payload: Dict) -> Dict:
+def ocr_payload_with_retry(payload: dict) -> dict:
     shortcode = str(payload.get("shortcode", "") or "").strip()
     kind = str(payload.get("kind", "") or "post").strip()
     last_exc: Exception = RuntimeError("Sin reintentos de OCR")
@@ -1847,14 +1841,14 @@ def ocr_payload_with_retry(payload: Dict) -> Dict:
 def process_source(
     profile_url: str,
     date_from: date,
-    acquired_shortcodes: Set[str],
-    results: List[Dict],
-    pending_ocr: List[Dict],
-    date_to: Optional[date] = None,
+    acquired_shortcodes: set[str],
+    results: list[dict],
+    pending_ocr: list[dict],
+    date_to: date | None = None,
     source_index: int = 0,
     source_total: int = 0,
     content_mode: str = "both",
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """
     Procesa una fuente usando navegación por flecha de Instagram.
     Requiere date_from (fecha límite inferior obligatoria).
@@ -1874,7 +1868,7 @@ def process_source(
     log(f"[SOURCE] {_ts()} 🧩 Filtro de contenido: {build_content_mode_label(content_mode)}")
     log(f"[SOURCE] {_ts()} 🪜 Flujo: flecha Instagram → detección de fecha/carrusel en modal → descarga → OCR por lote")
 
-    def handle_candidate_immediately(item: Dict) -> bool:
+    def handle_candidate_immediately(item: dict) -> bool:
         shortcode = item["shortcode"]
         kind = item["kind"]
         post_date_label = item.get("post_date") or "sin fecha"
@@ -1989,9 +1983,9 @@ def process_source(
 # ── Lote de fuentes ───────────────────────────────────────────────────────────
 
 def write_scrape_summary_log(
-    source_jobs: List[Dict],
+    source_jobs: list[dict],
     date_from: date,
-    date_to: Optional[date],
+    date_to: date | None,
     run_start_iso: str,
     total_downloaded: int,
     total_already_processed: int,
@@ -2034,11 +2028,11 @@ def write_scrape_summary_log(
 # ── Lote de fuentes ───────────────────────────────────────────────────────────
 
 def run_scrape_jobs(
-    source_jobs: List[Dict[str, int | str]],
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
+    source_jobs: list[dict[str, int | str]],
+    date_from: date | None = None,
+    date_to: date | None = None,
     content_mode: str = "both",
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """
     Punto de entrada principal del scraper.
     REQUIERE date_from (fecha límite inferior).
@@ -2083,8 +2077,8 @@ def run_scrape_jobs(
     acquired_shortcodes = set(processed_shortcodes)
     log(f"[RUN] {_ts()} 🔒 Posts ya procesados en registro: {len(processed_shortcodes)}")
 
-    results: List[Dict] = []
-    pending_ocr: List[Dict] = []
+    results: list[dict] = []
+    pending_ocr: list[dict] = []
     total_downloaded = 0
     total_queued_existing = 0
     total_already_processed = 0
@@ -2201,14 +2195,14 @@ def run_scrape_jobs(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def parse_cli_options(argv: List[str]) -> Tuple[List[str], Optional[date], Optional[date], str]:
+def parse_cli_options(argv: list[str]) -> tuple[list[str], date | None, date | None, str]:
     """
     Parsea opciones CLI. Solo modo por fecha: --until es obligatorio.
     Retorna (remaining_args, date_from, date_to, content_mode).
     """
-    remaining: List[str] = []
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
+    remaining: list[str] = []
+    date_from: date | None = None
+    date_to: date | None = None
     content_mode = "both"
     idx = 0
 
@@ -2217,10 +2211,7 @@ def parse_cli_options(argv: List[str]) -> Tuple[List[str], Optional[date], Optio
         if token in {"--until", "--since", "--date-from"}:
             if idx + 1 >= len(argv):
                 raise ValueError(f"Falta valor para {token}")
-            if token == "--date-from":
-                date_from = parse_iso_date(argv[idx + 1])
-            else:
-                date_from = parse_compact_date(argv[idx + 1])
+            date_from = parse_iso_date(argv[idx + 1]) if token == "--date-from" else parse_compact_date(argv[idx + 1])
             idx += 2
             continue
         if token == "--date-to":
@@ -2254,7 +2245,7 @@ def main() -> None:
         sys.exit(1)
 
     # Extraer URLs de perfil (ignorar tokens numéricos de modos legacy)
-    profile_sources: List[str] = []
+    profile_sources: list[str] = []
     for token in argv:
         # Saltar tokens numéricos puros (eran límites en el modo antiguo)
         if re.fullmatch(r"\d+", token.strip()):

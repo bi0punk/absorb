@@ -1,9 +1,8 @@
 import re
 from datetime import date, datetime
-from typing import Optional, Tuple
 
 
-def parse_iso_date(raw_value: Optional[str]) -> Optional[date]:
+def parse_iso_date(raw_value: str | None) -> date | None:
     if not raw_value:
         return None
     try:
@@ -12,7 +11,7 @@ def parse_iso_date(raw_value: Optional[str]) -> Optional[date]:
         return None
 
 
-def parse_compact_date(raw_value: Optional[str]) -> Optional[date]:
+def parse_compact_date(raw_value: str | None) -> date | None:
     if not raw_value:
         return None
     val = raw_value.strip()
@@ -27,12 +26,12 @@ def parse_compact_date(raw_value: Optional[str]) -> Optional[date]:
         return None
 
 
-def validate_date_range(date_from: Optional[date], date_to: Optional[date]) -> None:
+def validate_date_range(date_from: date | None, date_to: date | None) -> None:
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError(f"date_from ({date_from}) is after date_to ({date_to})")
 
 
-def parse_post_date_from_iso(raw_value: Optional[str]) -> Optional[date]:
+def parse_post_date_from_iso(raw_value: str | None) -> date | None:
     if not raw_value:
         return None
     try:
@@ -46,21 +45,19 @@ def parse_post_date_from_iso(raw_value: Optional[str]) -> Optional[date]:
 
 
 def match_post_date(
-    post_date_value: Optional[date],
-    date_from: Optional[date],
-    date_to: Optional[date],
+    post_date_value: date | None,
+    date_from: date | None,
+    date_to: date | None,
 ) -> bool:
     if post_date_value is None:
         return True
     if date_from and post_date_value < date_from:
         return False
-    if date_to and post_date_value > date_to:
-        return False
-    return True
+    return not (date_to and post_date_value > date_to)
 
 
 def should_stop_after_candidate(
-    post_date_value: Optional[date], date_from: Optional[date]
+    post_date_value: date | None, date_from: date | None
 ) -> bool:
     if post_date_value is None or date_from is None:
         return False
@@ -68,7 +65,7 @@ def should_stop_after_candidate(
 
 
 def build_mode_label(
-    date_from: Optional[date], date_to: Optional[date]
+    date_from: date | None, date_to: date | None
 ) -> str:
     if date_from and date_to:
         return f"from {date_from.isoformat()} to {date_to.isoformat()}"

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 web.py  –  Interfaz web para visualizar resultados del scraper de Instagram.
 Corre con:  python web.py
@@ -7,13 +6,13 @@ Accede en:  http://localhost:5000
 """
 
 import json
+import logging
 import mimetypes
 import os
 import signal
 import subprocess
 import sys
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import (
@@ -26,14 +25,14 @@ from flask import (
     send_file,
 )
 
+from absorb.dates import (
+    parse_compact_date,
+)
 from absorb.sources import (
     build_content_mode_label,
     build_source_metadata,
     parse_content_mode,
     parse_source_jobs,
-)
-from absorb.dates import (
-    parse_compact_date,
 )
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -63,7 +62,7 @@ app.logger.setLevel(logging.INFO)
 # ── Utilidades ──────────────────────────────────────────────────────────────────
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def interval_to_minutes(value: int, unit: str) -> int:
@@ -84,10 +83,7 @@ def read_json_file(path: Path, default):
 
 
 def parse_daily_times(raw_value) -> list[str]:
-    if isinstance(raw_value, list):
-        values = raw_value
-    else:
-        values = str(raw_value or '').replace('\n', ',').split(',')
+    values = raw_value if isinstance(raw_value, list) else str(raw_value or '').replace('\n', ',').split(',')
     normalized = []
     for item in values:
         token = str(item or '').strip()

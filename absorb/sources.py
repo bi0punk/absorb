@@ -1,6 +1,7 @@
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any
 
 from . import constants
 
@@ -23,7 +24,7 @@ def extract_source_username(profile_url: str) -> str:
     return profile_url.rstrip("/").rsplit("/", 1)[-1]
 
 
-def build_source_metadata(profile_url: str) -> Dict[str, str]:
+def build_source_metadata(profile_url: str) -> dict[str, str]:
     username = extract_source_username(profile_url)
     return {
         "profile_url": profile_url,
@@ -53,7 +54,7 @@ def parse_positive_limit(raw_value: Any, fallback: int = constants.DEFAULT_LIMIT
     return val
 
 
-def parse_content_mode(raw_value: Optional[str], fallback: str = "both") -> str:
+def parse_content_mode(raw_value: str | None, fallback: str = "both") -> str:
     if not raw_value:
         return fallback
     val = str(raw_value).strip().lower()
@@ -76,8 +77,8 @@ def get_profile_link_selector(content_mode: str) -> str:
     return selectors.get(content_mode, selectors["both"])
 
 
-def split_raw_source_entries(raw_values: Iterable[str]) -> List[str]:
-    entries: List[str] = []
+def split_raw_source_entries(raw_values: Iterable[str]) -> list[str]:
+    entries: list[str] = []
     for raw in raw_values:
         if not raw or not raw.strip():
             continue
@@ -85,10 +86,10 @@ def split_raw_source_entries(raw_values: Iterable[str]) -> List[str]:
     return [e.strip() for e in entries if e.strip()]
 
 
-def parse_profile_sources(raw_values: Iterable[str]) -> List[str]:
+def parse_profile_sources(raw_values: Iterable[str]) -> list[str]:
     entries = split_raw_source_entries(raw_values)
     seen: set = set()
-    result: List[str] = []
+    result: list[str] = []
     for e in entries:
         norm = normalize_profile_url(e)
         if norm not in seen:
@@ -99,10 +100,10 @@ def parse_profile_sources(raw_values: Iterable[str]) -> List[str]:
 
 def parse_source_jobs(
     raw_values: Iterable[str], default_limit: int = constants.DEFAULT_LIMIT
-) -> List[Dict]:
+) -> list[dict]:
     entries = split_raw_source_entries(raw_values)
     seen: set = set()
-    result: List[Dict] = []
+    result: list[dict] = []
     for e in entries:
         parts = e.split("|")
         raw_url = parts[0].strip()
@@ -118,9 +119,9 @@ def format_source_job_arg(profile_url: str, limit: int) -> str:
     return f"{profile_url}|{limit}"
 
 
-def parse_cli_sources_and_limit(argv: List[str]) -> Tuple[List[str], int]:
+def parse_cli_sources_and_limit(argv: list[str]) -> tuple[list[str], int]:
     limit: int = constants.DEFAULT_LIMIT
-    sources: List[str] = []
+    sources: list[str] = []
     for arg in argv:
         if arg.startswith("--"):
             continue
@@ -131,9 +132,9 @@ def parse_cli_sources_and_limit(argv: List[str]) -> Tuple[List[str], int]:
     return sources, limit
 
 
-def parse_cli_jobs(argv: List[str]) -> Tuple[List[Dict], Optional[int], str]:
-    jobs: List[Dict] = []
-    global_limit: Optional[int] = None
+def parse_cli_jobs(argv: list[str]) -> tuple[list[dict], int | None, str]:
+    jobs: list[dict] = []
+    global_limit: int | None = None
     content_mode: str = "both"
     i = 0
     while i < len(argv):

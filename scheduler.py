@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import json
 import os
@@ -7,10 +6,9 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List
+from zoneinfo import ZoneInfo
 
 BASE_DIR = Path("data_instagram")
 CONFIG_FILE = BASE_DIR / "scheduler_config.json"
@@ -24,14 +22,14 @@ stop_requested = False
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def future_iso(minutes: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    return (datetime.now(UTC) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
 
 
-def interval_config_to_minutes(config: Dict) -> int:
+def interval_config_to_minutes(config: dict) -> int:
     unit = str(config.get("interval_unit", "minutes") or "minutes").strip().lower()
     value = int(config.get("interval_value", config.get("interval_minutes", 15)) or 15)
     value = max(1, value)
@@ -69,7 +67,7 @@ def now_local() -> datetime:
 
 
 def future_iso_from_dt(dt_obj: datetime) -> str:
-    return dt_obj.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    return dt_obj.astimezone(UTC).replace(microsecond=0).isoformat()
 
 
 def next_daily_run_at(daily_times: list[str]) -> datetime:
@@ -108,7 +106,7 @@ def load_json(path: Path, default):
         return default
 
 
-def load_config() -> Dict:
+def load_config() -> dict:
     return load_json(
         CONFIG_FILE,
         {
@@ -165,8 +163,8 @@ def handle_signal(signum, frame):
     stop_requested = True
 
 
-def source_job_args(source_jobs: List[Dict]) -> List[str]:
-    args: List[str] = []
+def source_job_args(source_jobs: list[dict]) -> list[str]:
+    args: list[str] = []
     for job in source_jobs:
         profile_url = str(job.get("profile_url", "")).strip()
         if profile_url:
@@ -180,7 +178,7 @@ def append_log(line: str) -> None:
         fh.write(line.rstrip() + "\n")
 
 
-def run_cycle(config: Dict) -> int:
+def run_cycle(config: dict) -> int:
     jobs = source_job_args(config.get("source_jobs", []))
     if not jobs:
         append_log(f"[{utc_now_iso()}] [WARN] Scheduler sin fuentes configuradas.")

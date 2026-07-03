@@ -1,15 +1,12 @@
-import sys
 import random
 import time
-from datetime import datetime, timezone, date, timedelta
-from pathlib import Path
-from typing import Optional, Tuple
+from datetime import UTC, date, datetime
 
 from .constants import MANUAL_LOG_FILE, RUNTIME_LOG_FILE
 
 
 def _ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def append_manual_log(message: str, ignore_scheduler: bool = True) -> None:
@@ -42,7 +39,7 @@ def log_section(title: str) -> None:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def local_today() -> date:
@@ -52,13 +49,13 @@ def local_today() -> date:
         import zoneinfo
         tz = zoneinfo.ZoneInfo(tz_str)
     except Exception:
-        tz = timezone.utc
+        tz = UTC
     return datetime.now(tz).date()
 
 
 def build_effective_date_bounds(
-    date_from: Optional[date], date_to: Optional[date]
-) -> Tuple[Optional[date], Optional[date]]:
+    date_from: date | None, date_to: date | None
+) -> tuple[date | None, date | None]:
     effective_from = date_from
     effective_to = date_to
     if effective_from and effective_to and effective_from > effective_to:
@@ -67,9 +64,9 @@ def build_effective_date_bounds(
 
 
 def format_post_date_log(
-    post_date_value: Optional[date],
-    date_from: Optional[date],
-    date_to: Optional[date],
+    post_date_value: date | None,
+    date_from: date | None,
+    date_to: date | None,
 ) -> str:
     parts = []
     if post_date_value:
@@ -81,7 +78,7 @@ def format_post_date_log(
     return " ".join(parts)
 
 
-def existing_post_label(payload: Optional[dict], shortcode: str) -> str:
+def existing_post_label(payload: dict | None, shortcode: str) -> str:
     if payload is None:
         return f"no cache for #{shortcode}"
     status = payload.get("status", "unknown")
