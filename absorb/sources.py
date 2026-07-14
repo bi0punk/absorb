@@ -36,7 +36,9 @@ def build_source_metadata(profile_url: str) -> dict[str, str]:
 def sanitize_source_dirname(raw_value: str) -> str:
     sanitized = re.sub(r"[^a-zA-Z0-9_\-.]", "_", raw_value)
     sanitized = sanitized.strip("._")
-    return sanitized or "source"
+    if sanitized in (".", "..", ""):
+        return "source"
+    return sanitized
 
 
 def get_source_storage_dir(profile_url: str) -> Path:

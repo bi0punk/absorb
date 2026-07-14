@@ -24,6 +24,7 @@ from flask import (
     request,
     send_file,
 )
+from functools import wraps
 
 from absorb.dates import (
     parse_compact_date,
@@ -50,6 +51,23 @@ RUNTIME_LOG_FILE = BASE_DIR / "runtime.log"
 WEB_LOG_FILE = BASE_DIR / "web.log"
 
 app = Flask(__name__)
+
+WEB_USER = os.getenv("ABSORB_WEB_USER", "")
+WEB_PASSWORD = os.getenv("ABSORB_WEB_PASSWORD", "")
+
+@app.before_request
+def check_auth():
+    if request.path.startswith("/static/"):
+        return None
+    if not WEB_USER and not WEB_PASSWORD:
+        return None
+    auth = request.authorization
+    if not auth or auth.username != WEB_USER or auth.password != WEB_PASSWORD:
+        return Response(
+            "Authentication required", 401,
+            {"WWW-Authenticate": 'Basic realm="Absorb Dashboard"'}
+        )
+
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == str(WEB_LOG_FILE.resolve()) for h in app.logger.handlers):
     file_handler = logging.FileHandler(WEB_LOG_FILE, encoding="utf-8")

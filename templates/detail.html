@@ -150,9 +150,9 @@
                     font-size:.82rem;line-height:1.65;color:var(--text);white-space:pre-wrap;
                     border:1px solid var(--border)">{{ post.merged_text }}</div>
 
-        <button class="btn btn-sm mt-2"
+        <button class="btn btn-sm mt-2 copy-btn"
                 style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;font-size:.75rem"
-                onclick="copyText(this, `{{ post.merged_text | replace('`','\\`') | replace('\n','\\n') }}`)" >
+                data-text="{{ post.merged_text | e }}" >
           <i class="bi bi-clipboard me-1"></i> Copiar
         </button>
       </div>
@@ -268,7 +268,8 @@
 
 {% block scripts %}
 <script>
-function copyText(btn, text) {
+function copyText(btn) {
+  const text = btn.getAttribute('data-text') || '';
   navigator.clipboard.writeText(text).then(() => {
     btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Copiado';
     showToast('Texto copiado al portapapeles.', 'success');
