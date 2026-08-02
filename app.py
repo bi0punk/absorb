@@ -20,6 +20,18 @@ import pytesseract
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from absorb.dates import (
+    should_stop_after_candidate,
+    validate_date_range,
+)
+from absorb.sources import (
+    build_source_metadata,
+    extract_source_username,
+    normalize_profile_url,
+    parse_positive_limit,
+    parse_profile_sources,
+)
+
 # ── Directorios y archivos ────────────────────────────────────────────────────
 BASE_DIR = Path("data_instagram")
 STATE_FILE = "ig_state.json"
@@ -307,58 +319,6 @@ def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
 
 # ── Normalización de URLs y fuentes ──────────────────────────────────────────
 
-def normalize_profile_url(raw_value: str) -> str:
-    value = (raw_value or "").strip()
-    if not value:
-        return ""
-
-    value = value.rstrip("/")
-    if not value:
-        return ""
-
-    if value.startswith("@"):
-        value = value[1:]
-
-    if "instagram.com" not in value and not value.startswith("http"):
-        value = f"https://www.instagram.com/{value}"
-    elif value.startswith("www.instagram.com/"):
-        value = f"https://{value}"
-    elif value.startswith("instagram.com/"):
-        value = f"https://www.{value}"
-
-    match = re.search(r"instagram\.com/([^/?#]+)/?", value, re.IGNORECASE)
-    if match:
-        username = match.group(1)
-        return f"https://www.instagram.com/{username}/"
-
-    return value + "/"
-
-
-def extract_source_username(profile_url: str) -> str:
-    value = (profile_url or "").strip()
-    if not value:
-        return ""
-
-    match = re.search(r"instagram\.com/([^/?#]+)/?", value, re.IGNORECASE)
-    if match:
-        return match.group(1).strip().lower()
-
-    if value.startswith("@"):
-        return value[1:].strip().lower()
-
-    return value.strip().strip("/").lower()
-
-
-def build_source_metadata(profile_url: str) -> dict[str, str]:
-    normalized_url = normalize_profile_url(profile_url) if profile_url else ""
-    username = extract_source_username(normalized_url or profile_url)
-    return {
-        "profile_url": normalized_url or profile_url or "",
-        "source_username": username,
-        "source_label": f"@{username}" if username else "",
-    }
-
-
 def sanitize_source_dirname(raw_value: str) -> str:
     value = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(raw_value or "").strip().lower())
     value = value.strip("._-")
@@ -371,14 +331,6 @@ def get_source_storage_dir(profile_url: str = "") -> Path:
     meta = build_source_metadata(profile_url)
     dirname = sanitize_source_dirname(meta.get("source_username", "") or "sin_fuente")
     return BASE_DIR / dirname
-
-
-def parse_positive_limit(raw_value, fallback: int = DEFAULT_LIMIT) -> int:
-    try:
-        value = int(str(raw_value).strip())
-    except Exception:
-        value = fallback
-    return max(1, min(value, MAX_LIMIT))
 
 
 def parse_content_mode(raw_value: str | None, fallback: str = "both") -> str:
@@ -411,71 +363,6 @@ def build_content_mode_label(content_mode: str) -> str:
     }[normalized]
 
 
-def get_profile_link_selector(content_mode: str) -> str:
-    normalized = parse_content_mode(content_mode)
-    if normalized == "post":
-        return 'a[href*="/p/"]'
-    if normalized == "reel":
-        return 'a[href*="/reel/"]'
-    return 'a[href*="/p/"], a[href*="/reel/"]'
-
-
-def split_raw_source_entries(raw_values: Iterable[str]) -> list[str]:
-    items: list[str] = []
-    for raw in raw_values:
-        if raw is None:
-            continue
-        parts = re.split(r"[\n,;]+", str(raw))
-        for part in parts:
-            token = part.strip()
-            if token:
-                items.append(token)
-    return items
-
-
-def parse_profile_sources(raw_values: Iterable[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-
-    for part in split_raw_source_entries(raw_values):
-        url = normalize_profile_url(part)
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        normalized.append(url)
-
-    return normalized
-
-
-def parse_source_jobs(raw_values: Iterable[str], default_limit: int = DEFAULT_LIMIT) -> list[dict[str, int | str]]:
-    jobs_by_url: dict[str, dict[str, int | str]] = {}
-    default_limit = parse_positive_limit(default_limit, DEFAULT_LIMIT)
-
-    for token in split_raw_source_entries(raw_values):
-        profile_token = token
-        source_limit = default_limit
-
-        match = re.match(r"^(.*?)(?:\s*(?:=|\|)\s*(\d+))$", token)
-        if match:
-            profile_token = match.group(1).strip()
-            source_limit = parse_positive_limit(match.group(2), default_limit)
-
-        profile_url = normalize_profile_url(profile_token)
-        if not profile_url:
-            continue
-
-        jobs_by_url[profile_url] = {
-            "profile_url": profile_url,
-            "limit": source_limit,
-        }
-
-    return list(jobs_by_url.values())
-
-
-def format_source_job_arg(profile_url: str, limit: int) -> str:
-    return f"{normalize_profile_url(profile_url)}={parse_positive_limit(limit)}"
-
-
 def parse_cli_sources_and_limit(argv: list[str]) -> tuple[list[str], int]:
     if not argv:
         return [], DEFAULT_LIMIT
@@ -492,19 +379,6 @@ def parse_cli_sources_and_limit(argv: list[str]) -> tuple[list[str], int]:
         return [], parse_positive_limit(limit)
 
     return parse_profile_sources(raw_sources), parse_positive_limit(limit)
-
-
-def parse_cli_jobs(argv: list[str]) -> tuple[list[dict[str, int | str]], int | None, str]:
-    if not argv:
-        return [], None, "per_source"
-
-    if any(re.search(r"(?:=|\|)\s*\d+$", token.strip()) for token in argv):
-        jobs = parse_source_jobs(argv, default_limit=DEFAULT_LIMIT)
-        return jobs, None, "per_source"
-
-    profile_urls, limit = parse_cli_sources_and_limit(argv)
-    jobs = [{"profile_url": url, "limit": limit} for url in profile_urls]
-    return jobs, limit, "shared_total"
 
 
 def parse_iso_date(raw_value: str | None) -> date | None:
@@ -527,11 +401,6 @@ def parse_compact_date(raw_value: str | None) -> date | None:
         raise ValueError(f"Fecha inválida: {value}. Usa formato ddmmaa, por ejemplo 010326.") from exc
 
 
-def validate_date_range(date_from: date | None, date_to: date | None) -> None:
-    if date_from and date_to and date_from > date_to:
-        raise ValueError("La fecha desde no puede ser mayor que la fecha hasta.")
-
-
 def parse_post_date_from_iso(raw_value: str | None) -> date | None:
     value = str(raw_value or "").strip()
     if not value:
@@ -548,12 +417,6 @@ def match_post_date(post_date_value: date | None, date_from: date | None, date_t
     if date_from and post_date_value < date_from:
         return False
     return not (date_to and post_date_value > date_to)
-
-
-def should_stop_after_candidate(post_date_value: date | None, date_from: date | None) -> bool:
-    if not post_date_value:
-        return False
-    return bool(date_from and post_date_value < date_from)
 
 
 def build_mode_label(date_from: date | None, date_to: date | None) -> str:
@@ -574,81 +437,6 @@ def build_source_execution_label(job: dict[str, int | str], collect_all_by_date:
     if scheduler_all_new:
         return f"{source_label} (solo nuevos, sin cuota fija)"
     return f"{source_label} (límite={job.get('limit', '?')})"
-
-
-# ── Fechas de posts individuales ──────────────────────────────────────────────
-
-def fetch_post_datetime(context, kind: str, shortcode: str) -> str | None:
-    post_url = (
-        f"https://www.instagram.com/{kind}/{shortcode}/"
-        if kind == "reel"
-        else f"https://www.instagram.com/p/{shortcode}/"
-    )
-    log(f"[FETCH] {_ts()} 🕐 Consultando fecha de post {kind}:{shortcode} → {post_url}")
-    page = context.new_page()
-    try:
-        response = None
-        try:
-            response = page.goto(post_url, wait_until="commit", timeout=60000)
-        except Exception as nav_exc:
-            log(f"[WARN] {_ts()} Navegación inicial con error en {kind}:{shortcode} → {nav_exc}")
-        status = None
-        try:
-            if response is not None:
-                status = response.status
-        except Exception:
-            status = None
-        if status is not None:
-            log(f"[FETCH] {_ts()} 🌐 Respuesta HTTP {kind}:{shortcode} → status={status}")
-
-        selectors = [
-            'time[datetime]',
-            'meta[property="article:published_time"]',
-            'meta[property="og:published_time"]',
-        ]
-
-        for selector in selectors:
-            try:
-                page.wait_for_selector(selector, timeout=8000)
-                if selector == 'time[datetime]':
-                    value = page.locator(selector).first.get_attribute('datetime')
-                else:
-                    value = page.locator(selector).first.get_attribute('content')
-                result = (value or '').strip() or None
-                if result:
-                    log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result} | selector={selector}")
-                    return result
-            except Exception:
-                pass
-
-        try:
-            html = page.content()
-        except Exception:
-            html = ''
-
-        html_match = None
-        if html:
-            html_match = (
-                re.search(r'"uploadDate"\s*:\s*"([^"]+)"', html)
-                or re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
-                or re.search(r'"taken_at"\s*:\s*(\d{10})', html)
-            )
-        if html_match:
-            raw = html_match.group(1)
-            result = datetime.fromtimestamp(int(raw), tz=UTC).isoformat() if raw.isdigit() and len(raw) == 10 else raw
-            log(f"[FETCH] {_ts()} ✓ Fecha obtenida {kind}:{shortcode} → {result} | selector=html-fallback")
-            return result
-
-        if status is not None and status >= 400:
-            log(f"[WARN] {_ts()} Instagram respondió HTTP {status} para {kind}:{shortcode}. No fue posible validar fecha desde el permalink.")
-        else:
-            log(f"[FETCH] {_ts()} ⚠ Sin fecha encontrada para {kind}:{shortcode}")
-        return None
-    except Exception as exc:
-        log(f"[WARN] {_ts()} No se pudo leer fecha para {kind}:{shortcode} → {exc}")
-        return None
-    finally:
-        page.close()
 
 
 # ── Navegador / contexto ──────────────────────────────────────────────────────

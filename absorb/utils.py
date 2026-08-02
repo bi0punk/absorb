@@ -104,7 +104,5 @@ def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
         delay = random.uniform(min_sec, max_sec) * factor
     else:
         delay = random.uniform(min_sec, max_sec) * factor
-    if label:
-        pass
     time.sleep(delay)
     return delay
