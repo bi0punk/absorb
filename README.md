@@ -1,23 +1,22 @@
 # absorb
 
+Scraper de Instagram con OCR en español. Automatiza la navegación de perfiles, descarga posts y reels, ejecuta OCR (Tesseract) sobre las imágenes, persiste los resultados en SQLite y los expone en un visor web con scheduler periódico.
+
 [![CI](https://github.com/bi0punk/absorb/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/absorb/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Instagram scraper with OCR capabilities. Automates browsing of Instagram profiles, downloads posts and reels, runs OCR (Spanish) on images, and persists results in SQLite with a web viewer and scheduler.
-
-## Tabla de contenidos
+## Contenido
 
 - [Características](#características)
-- [Stack](#stack)
 - [Arquitectura](#arquitectura)
-- [Requisitos](#requisitos)
+- [Stack](#stack)
+- [Estructura del repositorio](#estructura-del-repositorio)
 - [Instalación](#instalación)
 - [Uso](#uso)
-- [Tests](#tests)
-- [CI](#ci)
-- [Datos](#datos)
-- [Limitaciones y roadmap](#limitaciones-y-roadmap)
+- [Configuración](#configuración)
+- [Tests / CI](#tests--ci)
+- [Roadmap](#roadmap)
 - [Licencia](#licencia)
 
 ## Características
@@ -29,6 +28,22 @@ Instagram scraper with OCR capabilities. Automates browsing of Instagram profile
 - Web viewer Flask para navegar resultados.
 - Scheduler periódico (configurable por fuente) con zonas horarias.
 
+## Arquitectura
+
+```mermaid
+flowchart TD
+  A[login_instagram.py<br/>sesión de autenticación] --> B[app.py<br/>scraper Playwright]
+  B --> C[Descarga posts / reels<br/>dedup por shortcode]
+  C --> D[OCR Tesseract +<br/>OpenCV preprocesado]
+  D --> E[(SQLite registry.sqlite3<br/>absorb/ paquete core)]
+  B --> F[scheduler.py<br/>orquestador periódico]
+  F --> B
+  E --> G[web.py<br/>Flask viewer]
+  F --> E
+```
+
+El paquete core `absorb/` (sources, dates, registry, state, utils, constants) es Python puro (sqlite3/json/re), sin dependencias pesadas, lo que permite probarlo en CI sin Playwright ni Tesseract.
+
 ## Stack
 
 - **Lenguaje**: Python 3.12+
@@ -39,35 +54,31 @@ Instagram scraper with OCR capabilities. Automates browsing of Instagram profile
 - **Auth**: `login_instagram.py` (helper de login con Playwright)
 - **Calidad**: ruff (lint), pytest
 
-## Arquitectura
+## Estructura del repositorio
 
 ```
-┌──────────────┐   schedule   ┌──────────────┐
-│ scheduler.py  │ ───────────► │  app.py        │  (Playwright)
-└──────────────┘              │  scraper       │
-                              └───────┬────────┘
-                                      │ descarga + OCR
-                                      ▼
-┌──────────────┐   query    ┌──────────────────┐
-│  web.py       │ ◄──────── │  absorb/          │  (SQLite registry)
-│  Flask viewer │           │  sources/dates/   │
-└──────────────┘           │  registry/state   │
-                           └──────────────────┘
+absorb/
+├── app.py                   # Scraper principal (Playwright + OCR)
+├── web.py                   # Flask viewer
+├── scheduler.py             # Orquestador periódico
+├── login_instagram.py       # Helper de autenticación
+├── absorb/                  # Paquete core (Python puro)
+│   ├── sources.py
+│   ├── dates.py
+│   ├── registry.py
+│   ├── state.py
+│   ├── utils.py
+│   └── constants.py
+├── templates/               # Vistas Jinja2 (base, index, detail, login)
+├── tests/                   # 120 tests (sources, dates, registry, state)
+├── requirements.txt
+├── pyproject.toml
+└── .github/workflows/ci.yml
 ```
-
-- **absorb/**: paquete core reutilizable (sources, dates, registry, state, utils, constants). Pure Python (sqlite3/json/re), sin deps pesadas → testeable en CI.
-- **app.py**: scraper principal (Playwright + OCR).
-- **web.py**: Flask viewer.
-- **scheduler.py**: orquestador periódico.
-- **login_instagram.py**: helper de autenticación.
-
-## Requisitos
-
-- Python 3.12+
-- Chromium (vía `playwright install chromium`)
-- Tesseract OCR (`tesseract-ocr` + datos `spa`)
 
 ## Instalación
+
+Requisitos: Python 3.12+, Chromium (vía `playwright install chromium`) y Tesseract OCR (`tesseract-ocr` + datos `spa`).
 
 ```bash
 python3 -m venv .venv
@@ -94,30 +105,39 @@ python web.py
 python scheduler.py
 ```
 
-## Tests
+## Configuración
+
+Variables de entorno reales (definidas en `app.py`):
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `SCRAPER_DELAY_FACTOR` | `0.7` | Factor de retardo entre acciones (0.15–3.0) |
+| `SCRAPER_BEHAVIOR_PROFILE` | `balanced` | Perfil de comportamiento de navegación |
+| `SCRAPER_HEADLESS` | off | `1` ejecuta el browser invisible (scheduler/CI) |
+| `SCRAPER_RUN_CONTEXT` | — | `scheduler` marca una ejecución desde scheduler |
+
+Los artefactos runtime (`data_instagram/`): SQLite registry, estado por fuente, posts descargados, análisis OCR, sesión de login y config del scheduler. Todo el directorio está en `.gitignore`.
+
+## Tests / CI
 
 ```bash
 pytest -q
 ```
 
-120 tests cubren el paquete `absorb/` (sources, dates, registry, state) — pure Python, sin Playwright/OCR/DB externa. Usan SQLite efímera y tmp_path.
+120 tests cubren el paquete `absorb/` (sources, dates, registry, state), con SQLite efímera y `tmp_path`; no requieren Playwright/OCR/DB externa.
 
-## CI
+CI: GitHub Actions (`.github/workflows/ci.yml`) sobre Python 3.12: **lint** (`ruff check .`) y **test** (`pytest -q`, sin Playwright/Tesseract/Chromium).
 
-GitHub Actions (`.github/workflows/ci.yml`) sobre Python 3.12:
+## Roadmap
 
-- **lint** — `ruff check .`
-- **test** — instala Flask + pytest y corre los tests del paquete `absorb/` (no requiere Playwright/Tesseract/Chromium).
+- [x] Scraping de perfiles y reels con deduplicación por shortcode
+- [x] OCR en español con preprocesamiento OpenCV
+- [x] Persistencia SQLite + web viewer + scheduler
+- [ ] Tests del scraper con fixtures HTML (end-to-end)
+- [ ] Exportación CSV/JSON
+- [ ] Dashboard de métricas
 
-## Datos
-
-- `data_instagram/` — todos los artefactos runtime (gitignored): SQLite registry, estado por fuente, posts descargados, análisis OCR, sesión de login, config del scheduler.
-
-## Limitaciones y roadmap
-
-- **Limitación**: depende del DOM de Instagram (frágil a cambios de la plataforma).
-- **Limitación**: sin tests del scraper end-to-end (requiere sesión real + Chromium).
-- **Roadmap**: tests con fixtures HTML para el scraper, exportación CSV/JSON, dashboard de métricas.
+Limitación conocida: depende del DOM de Instagram (frágil a cambios de la plataforma).
 
 ## Licencia
 
