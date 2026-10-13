@@ -22,6 +22,7 @@ from absorb.registry import (
 @pytest.fixture(autouse=True)
 def setup(monkeypatch, tmp_path):
     from absorb import constants
+
     db_path = tmp_path / "registry.sqlite3"
     monkeypatch.setattr(constants, "REGISTRY_DB", db_path)
     monkeypatch.setattr(constants, "BASE_DIR", tmp_path)
@@ -32,9 +33,7 @@ def setup(monkeypatch, tmp_path):
 class TestRegistry:
     def test_init_creates_table(self):
         conn = get_registry_connection()
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         conn.close()
         assert any(r["name"] == "processed_posts" for r in tables)
 
@@ -42,7 +41,7 @@ class TestRegistry:
         post_dir = tmp_path / "source_user" / "-abc123"
         analysis_path = post_dir / "abc123.analysis.json"
         post_dir.mkdir(parents=True)
-        analysis_path.write_text('{}')
+        analysis_path.write_text("{}")
 
         upsert_registry_record(
             shortcode="abc123",
@@ -86,8 +85,14 @@ class TestRegistry:
         analysis.write_text(json.dumps({"shortcode": "abc123", "status": "processed"}))
 
         upsert_registry_record(
-            "abc123", "post", "url", "testuser", "@testuser",
-            str(post_dir), str(analysis), "processed",
+            "abc123",
+            "post",
+            "url",
+            "testuser",
+            "@testuser",
+            str(post_dir),
+            str(analysis),
+            "processed",
         )
 
         payload = find_cached_payload("abc123")
@@ -104,8 +109,14 @@ class TestRegistry:
         analysis.write_text(json.dumps({"shortcode": "def456", "status": "downloaded"}))
 
         upsert_registry_record(
-            "def456", "post", "url", "testuser", "@testuser",
-            str(post_dir), str(analysis), "downloaded",
+            "def456",
+            "post",
+            "url",
+            "testuser",
+            "@testuser",
+            str(post_dir),
+            str(analysis),
+            "downloaded",
         )
 
         payload = find_downloaded_payload("def456")
@@ -166,7 +177,7 @@ class TestRegistry:
         post_dir = tmp_path / "u" / "-abc123"
         analysis = post_dir / "abc123.analysis.json"
         post_dir.mkdir(parents=True)
-        analysis.write_text('{}')
+        analysis.write_text("{}")
         upsert_registry_record("abc123", "post", "url", "u", "@u", str(post_dir), str(analysis), "processed")
 
         found = locate_post_dir("abc123")

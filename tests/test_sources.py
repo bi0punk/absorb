@@ -26,7 +26,9 @@ class TestNormalizeProfileUrl:
         assert normalize_profile_url("https://instagram.com/testuser/") == "https://www.instagram.com/testuser/"
 
     def test_with_query_params(self):
-        assert normalize_profile_url("https://www.instagram.com/testuser/?hl=en") == "https://www.instagram.com/testuser/"
+        assert (
+            normalize_profile_url("https://www.instagram.com/testuser/?hl=en") == "https://www.instagram.com/testuser/"
+        )
 
     def test_just_username(self):
         assert normalize_profile_url("testuser") == "https://www.instagram.com/testuser/"

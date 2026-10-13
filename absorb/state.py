@@ -36,6 +36,7 @@ def get_source_state_entry(profile_url: str) -> dict:
 
 def infer_latest_shortcode_from_summary(profile_url: str) -> str:
     from .sources import extract_source_username
+
     username = extract_source_username(profile_url)
     summary = read_json(constants.SUMMARY_FILE, [])
     for post in summary:

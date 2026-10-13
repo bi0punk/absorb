@@ -13,6 +13,7 @@ from absorb.state import (
 @pytest.fixture(autouse=True)
 def setup(monkeypatch, tmp_path):
     from absorb import constants
+
     monkeypatch.setattr(constants, "SOURCE_STATE_FILE", tmp_path / "source_state.json")
     monkeypatch.setattr(constants, "SUMMARY_FILE", tmp_path / "summary.json")
     yield

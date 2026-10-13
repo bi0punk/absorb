@@ -56,17 +56,13 @@ def match_post_date(
     return not (date_to and post_date_value > date_to)
 
 
-def should_stop_after_candidate(
-    post_date_value: date | None, date_from: date | None
-) -> bool:
+def should_stop_after_candidate(post_date_value: date | None, date_from: date | None) -> bool:
     if post_date_value is None or date_from is None:
         return False
     return post_date_value < date_from
 
 
-def build_mode_label(
-    date_from: date | None, date_to: date | None
-) -> str:
+def build_mode_label(date_from: date | None, date_to: date | None) -> str:
     if date_from and date_to:
         return f"from {date_from.isoformat()} to {date_to.isoformat()}"
     if date_from:

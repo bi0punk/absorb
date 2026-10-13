@@ -37,9 +37,7 @@ def init_registry() -> None:
 
 def find_post_dir_in_registry(shortcode: str) -> Path | None:
     conn = get_registry_connection()
-    row = conn.execute(
-        "SELECT post_dir FROM processed_posts WHERE shortcode = ?", (shortcode,)
-    ).fetchone()
+    row = conn.execute("SELECT post_dir FROM processed_posts WHERE shortcode = ?", (shortcode,)).fetchone()
     conn.close()
     return Path(row["post_dir"]) if row else None
 
@@ -57,6 +55,7 @@ def locate_post_dir(shortcode: str) -> Path | None:
 
 def expected_post_dir(shortcode: str, profile_url: str) -> Path:
     from .sources import extract_source_username, sanitize_source_dirname
+
     username = extract_source_username(profile_url)
     return constants.BASE_DIR / sanitize_source_dirname(username) / f"-{shortcode}"
 
@@ -82,9 +81,7 @@ def infer_payload_status(payload: dict | None) -> str:
     return status if status in ("processed", "downloaded") else ""
 
 
-def find_analysis_path(
-    shortcode: str, statuses: Iterable[str] | None = None
-) -> Path | None:
+def find_analysis_path(shortcode: str, statuses: Iterable[str] | None = None) -> Path | None:
     for p in constants.BASE_DIR.rglob(f"{shortcode}{constants.ANALYSIS_SUFFIX}"):
         if p.is_file():
             return p
@@ -109,8 +106,18 @@ def upsert_registry_record(
            (shortcode, kind, status, profile_url, source_username, source_label,
             post_dir, analysis_path, post_iso, original_source)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (shortcode, kind, status, profile_url, source_username, source_label,
-         post_dir, analysis_path, post_iso, original_source),
+        (
+            shortcode,
+            kind,
+            status,
+            profile_url,
+            source_username,
+            source_label,
+            post_dir,
+            analysis_path,
+            post_iso,
+            original_source,
+        ),
     )
     conn.commit()
     conn.close()
@@ -131,13 +138,21 @@ def bootstrap_registry_from_disk() -> int:
         kind = payload.get("kind", "post")
         status = payload.get("status", "processed")
         from .sources import extract_source_username
+
         profile_url = payload.get("profile_url", "")
         source_username = payload.get("source_username", extract_source_username(profile_url))
         source_label = payload.get("source_label", f"@{source_username}")
         post_iso = payload.get("post_iso", "")
         upsert_registry_record(
-            shortcode, kind, profile_url, source_username, source_label,
-            post_dir, str(analysis_file), status, post_iso,
+            shortcode,
+            kind,
+            profile_url,
+            source_username,
+            source_label,
+            post_dir,
+            str(analysis_file),
+            status,
+            post_iso,
         )
         count += 1
     return count
@@ -145,9 +160,7 @@ def bootstrap_registry_from_disk() -> int:
 
 def load_processed_shortcodes() -> set[str]:
     conn = get_registry_connection()
-    rows = conn.execute(
-        "SELECT shortcode FROM processed_posts WHERE status = 'processed'"
-    ).fetchall()
+    rows = conn.execute("SELECT shortcode FROM processed_posts WHERE status = 'processed'").fetchall()
     conn.close()
     return {r["shortcode"] for r in rows}
 

@@ -54,6 +54,7 @@ app = Flask(__name__)
 WEB_USER = os.getenv("ABSORB_WEB_USER", "")
 WEB_PASSWORD = os.getenv("ABSORB_WEB_PASSWORD", "")
 
+
 @app.before_request
 def check_auth():
     if request.path.startswith("/static/"):
@@ -62,13 +63,14 @@ def check_auth():
         return None
     auth = request.authorization
     if not auth or auth.username != WEB_USER or auth.password != WEB_PASSWORD:
-        return Response(
-            "Authentication required", 401,
-            {"WWW-Authenticate": 'Basic realm="Absorb Dashboard"'}
-        )
+        return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Absorb Dashboard"'})
+
 
 BASE_DIR.mkdir(parents=True, exist_ok=True)
-if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == str(WEB_LOG_FILE.resolve()) for h in app.logger.handlers):
+if not any(
+    isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == str(WEB_LOG_FILE.resolve())
+    for h in app.logger.handlers
+):
     file_handler = logging.FileHandler(WEB_LOG_FILE, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s"))
@@ -77,6 +79,7 @@ app.logger.setLevel(logging.INFO)
 
 
 # ── Utilidades ──────────────────────────────────────────────────────────────────
+
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -97,16 +100,14 @@ def read_json_file(path: Path, default):
         return default
 
 
-
-
 def parse_daily_times(raw_value) -> list[str]:
-    values = raw_value if isinstance(raw_value, list) else str(raw_value or '').replace('\n', ',').split(',')
+    values = raw_value if isinstance(raw_value, list) else str(raw_value or "").replace("\n", ",").split(",")
     normalized = []
     for item in values:
-        token = str(item or '').strip()
+        token = str(item or "").strip()
         if not token:
             continue
-        parts = token.split(':', 1)
+        parts = token.split(":", 1)
         if len(parts) != 2:
             continue
         try:
@@ -117,6 +118,7 @@ def parse_daily_times(raw_value) -> list[str]:
         if 0 <= hh <= 23 and 0 <= mm <= 59:
             normalized.append(f"{hh:02d}:{mm:02d}")
     return sorted(set(normalized))
+
 
 def normalize_post_source(post: dict) -> dict:
     if not isinstance(post, dict):
@@ -176,13 +178,16 @@ def build_grouped_sources(posts: list) -> list:
     for post in posts:
         normalized = normalize_post_source(post)
         source_key = normalized.get("source_label") or normalized.get("source_username") or "@sin_fuente"
-        group = grouped.setdefault(source_key, {
-            "source_key": source_key,
-            "source_label": normalized.get("source_label") or source_key,
-            "source_username": normalized.get("source_username", ""),
-            "profile_url": normalized.get("profile_url", ""),
-            "posts": [],
-        })
+        group = grouped.setdefault(
+            source_key,
+            {
+                "source_key": source_key,
+                "source_label": normalized.get("source_label") or source_key,
+                "source_username": normalized.get("source_username", ""),
+                "profile_url": normalized.get("profile_url", ""),
+                "posts": [],
+            },
+        )
         if normalized.get("profile_url") and not group.get("profile_url"):
             group["profile_url"] = normalized.get("profile_url")
         group["posts"].append(normalized)
@@ -359,12 +364,15 @@ def parse_scheduler_request() -> tuple[list[dict], str, str]:
     return source_jobs, raw_combined, content_mode
 
 
-def build_run_command_args(source_jobs: list[dict], historical_until: str = "", scheduler_all_new: bool = False, content_mode: str = "both") -> list[str]:
+def build_run_command_args(
+    source_jobs: list[dict], historical_until: str = "", scheduler_all_new: bool = False, content_mode: str = "both"
+) -> list[str]:
     """Construye argumentos CLI para app.py. Siempre requiere --until."""
     args: list[str] = ["--content-mode", parse_content_mode(content_mode)]
     if scheduler_all_new:
         # En modo scheduler, scrapeamos desde hoy hasta hoy (solo últimas 24h)
         from datetime import datetime as _dt
+
         today_ddmmaa = _dt.now().strftime("%d%m%y")
         args.extend(["--until", today_ddmmaa])
     else:
@@ -385,6 +393,7 @@ def launch_scheduler_process() -> None:
 
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():
@@ -462,7 +471,11 @@ def run_scraper():
         return jsonify({"error": "Debes ingresar al menos una fuente de Instagram."}), 400
 
     def generate():
-        cmd = [sys.executable, str(APP_SCRIPT), *build_run_command_args(source_jobs, historical_until=historical_until, content_mode=content_mode)]
+        cmd = [
+            sys.executable,
+            str(APP_SCRIPT),
+            *build_run_command_args(source_jobs, historical_until=historical_until, content_mode=content_mode),
+        ]
         yield f"data: ▶ Ejecutando: {' '.join(cmd)}\n\n"
         yield f"data: [INFO] Especificación recibida: {raw_combined}\n\n"
         yield "data: [INFO] Modo manual solicitado: histórico por fecha\n\n"
@@ -524,7 +537,9 @@ def scheduler_start():
         interval_unit = "minutes"
     daily_times = parse_daily_times(request.form.get("daily_times", ""))
     if schedule_mode == "daily_times" and not daily_times:
-        return jsonify({"error": "Debes indicar al menos un horario HH:MM para el modo programado por horas fijas."}), 400
+        return jsonify(
+            {"error": "Debes indicar al menos un horario HH:MM para el modo programado por horas fijas."}
+        ), 400
     config = save_scheduler_config(
         {
             "enabled": True,
@@ -542,7 +557,15 @@ def scheduler_start():
         message = "Scheduler iniciado."
     else:
         message = "Scheduler ya estaba corriendo. Configuración actualizada."
-    app.logger.info("Scheduler start/update | mode=%s | interval=%s %s | daily_times=%s | content_mode=%s | fuentes=%s", schedule_mode, interval_value, interval_unit, daily_times, content_mode, [str(job['profile_url']) for job in source_jobs])
+    app.logger.info(
+        "Scheduler start/update | mode=%s | interval=%s %s | daily_times=%s | content_mode=%s | fuentes=%s",
+        schedule_mode,
+        interval_value,
+        interval_unit,
+        daily_times,
+        content_mode,
+        [str(job["profile_url"]) for job in source_jobs],
+    )
 
     return jsonify({"ok": True, "message": message, "scheduler": scheduler_snapshot(), "config": config})
 
