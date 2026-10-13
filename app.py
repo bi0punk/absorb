@@ -106,10 +106,10 @@ RETRY_WAIT_MIN = 5
 RETRY_WAIT_MAX = 12
 
 try:
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 except Exception:
-    pass
+    pass  # nosec B110 - la reconexión de buffers no debe interrumpir el arranque
 
 
 def print(*args, **kwargs):
@@ -118,6 +118,7 @@ def print(*args, **kwargs):
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+
 
 def _ts() -> str:
     """Timestamp compacto UTC para logs."""
@@ -177,13 +178,13 @@ def format_post_date_log(post_date_value: date | None, date_from: date | None, d
         f"límite_hasta={upper.isoformat() if upper else '-'}",
         f"en_rango={'sí' if within else 'no'}",
     ]
-    return ' | '.join(parts)
+    return " | ".join(parts)
 
 
 def existing_post_label(payload: dict, shortcode: str) -> str:
-    image_path = str(payload.get('image_path', '') or '').strip()
-    post_dir = str(payload.get('post_dir', '') or '').strip()
-    processed_at = str(payload.get('processed_at', '') or '').strip()
+    image_path = str(payload.get("image_path", "") or "").strip()
+    post_dir = str(payload.get("post_dir", "") or "").strip()
+    processed_at = str(payload.get("processed_at", "") or "").strip()
     return (
         f"shortcode={shortcode}"
         f" | imagen={'sí' if image_path else 'no'}"
@@ -195,17 +196,17 @@ def existing_post_label(payload: dict, shortcode: str) -> str:
 def recover_existing_payload(
     shortcode: str,
     kind: str,
-    profile_url: str = '',
-    post_datetime: str = '',
-    post_date: str = '',
+    profile_url: str = "",
+    post_datetime: str = "",
+    post_date: str = "",
 ) -> tuple[str, dict] | None:
     cached_payload = find_cached_payload(shortcode)
     if cached_payload:
-        return 'processed_cache', cached_payload
+        return "processed_cache", cached_payload
 
     downloaded_payload = find_downloaded_payload(shortcode)
     if downloaded_payload:
-        return 'downloaded_cache', downloaded_payload
+        return "downloaded_cache", downloaded_payload
 
     post_dir = locate_post_dir(shortcode)
     if not post_dir:
@@ -233,34 +234,36 @@ def recover_existing_payload(
         write_analysis_payload(post_dir, shortcode, payload)
     else:
         payload = dict(payload)
-        payload.setdefault('kind', kind)
-        payload.setdefault('shortcode', shortcode)
-        payload.setdefault('profile_url', build_source_metadata(profile_url).get('profile_url', ''))
-        payload.setdefault('post_url', build_post_url(kind, shortcode))
-        payload['post_dir'] = str(post_dir)
-        payload['image_path'] = str(image_path)
-        if caption and not str(payload.get('caption', '') or '').strip():
-            payload['caption'] = caption
-        payload.setdefault('ocr_best', '')
-        payload.setdefault('merged_text', str(payload.get('caption', '') or '').strip())
-        payload.setdefault('processed_at', '')
-        payload.setdefault('post_datetime', post_datetime)
-        payload.setdefault('post_date', post_date)
+        payload.setdefault("kind", kind)
+        payload.setdefault("shortcode", shortcode)
+        payload.setdefault("profile_url", build_source_metadata(profile_url).get("profile_url", ""))
+        payload.setdefault("post_url", build_post_url(kind, shortcode))
+        payload["post_dir"] = str(post_dir)
+        payload["image_path"] = str(image_path)
+        if caption and not str(payload.get("caption", "") or "").strip():
+            payload["caption"] = caption
+        payload.setdefault("ocr_best", "")
+        payload.setdefault("merged_text", str(payload.get("caption", "") or "").strip())
+        payload.setdefault("processed_at", "")
+        payload.setdefault("post_datetime", post_datetime)
+        payload.setdefault("post_date", post_date)
 
-    processed = bool(str(payload.get('ocr_best', '') or '').strip() or str(payload.get('processed_at', '') or '').strip())
+    processed = bool(
+        str(payload.get("ocr_best", "") or "").strip() or str(payload.get("processed_at", "") or "").strip()
+    )
     out_json = write_analysis_payload(post_dir, shortcode, payload)
     upsert_registry_record(
         shortcode=shortcode,
-        kind=str(payload.get('kind', '') or kind),
-        profile_url=str(payload.get('profile_url', '') or profile_url),
-        post_url=str(payload.get('post_url', '') or build_post_url(kind, shortcode)),
+        kind=str(payload.get("kind", "") or kind),
+        profile_url=str(payload.get("profile_url", "") or profile_url),
+        post_url=str(payload.get("post_url", "") or build_post_url(kind, shortcode)),
         post_dir=str(post_dir),
         analysis_json_path=str(out_json),
         image_path=str(image_path),
-        status='processed' if processed else 'downloaded',
-        processed_at=str(payload.get('processed_at', '') or ''),
+        status="processed" if processed else "downloaded",
+        processed_at=str(payload.get("processed_at", "") or ""),
     )
-    return ('processed_disk' if processed else 'downloaded_disk', payload)
+    return ("processed_disk" if processed else "downloaded_disk", payload)
 
 
 def save_live_screenshot(page, label: str = "", scroll_idx: int = 0, extra: str = "") -> None:
@@ -283,9 +286,7 @@ def save_live_screenshot(page, label: str = "", scroll_idx: int = 0, extra: str 
             "timestamp": utc_now_iso(),
             "screenshot_file": "current.png",
         }
-        (LIVE_SCREENSHOT_DIR / "status.json").write_text(
-            json.dumps(status, ensure_ascii=False), encoding="utf-8"
-        )
+        (LIVE_SCREENSHOT_DIR / "status.json").write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass  # Nunca interrumpir el scraping por fallos de screenshot
 
@@ -299,6 +300,7 @@ def reset_manual_log() -> None:
 
 
 # ── Utilidades de tiempo ──────────────────────────────────────────────────────
+
 
 def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
     """Espera un tiempo aleatorio dentro del rango dado, con perfil de pacing configurable."""
@@ -318,6 +320,7 @@ def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
 
 
 # ── Normalización de URLs y fuentes ──────────────────────────────────────────
+
 
 def sanitize_source_dirname(raw_value: str) -> str:
     value = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(raw_value or "").strip().lower())
@@ -429,7 +432,9 @@ def build_mode_label(date_from: date | None, date_to: date | None) -> str:
     return "solo nuevos"
 
 
-def build_source_execution_label(job: dict[str, int | str], collect_all_by_date: bool = False, scheduler_all_new: bool = False) -> str:
+def build_source_execution_label(
+    job: dict[str, int | str], collect_all_by_date: bool = False, scheduler_all_new: bool = False
+) -> str:
     source_meta = build_source_metadata(str(job.get("profile_url", "")))
     source_label = source_meta.get("source_label") or str(job.get("profile_url", ""))
     if collect_all_by_date:
@@ -441,16 +446,17 @@ def build_source_execution_label(job: dict[str, int | str], collect_all_by_date:
 
 # ── Navegador / contexto ──────────────────────────────────────────────────────
 
+
 def build_context(browser):
-    log(f"[BROWSER] {_ts()} Creando contexto de navegador (state={'cargado' if Path(STATE_FILE).exists() else 'sin sesión'})")
+    log(
+        f"[BROWSER] {_ts()} Creando contexto de navegador (state={'cargado' if Path(STATE_FILE).exists() else 'sin sesión'})"
+    )
     kwargs = dict(
         viewport={"width": 1400, "height": 1800},
         locale="es-CL",
         timezone_id="America/Santiago",
         user_agent=(
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/123.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         ),
     )
     if Path(STATE_FILE).exists():
@@ -490,7 +496,9 @@ def dismiss_cookie_banner(page) -> bool:
     return False
 
 
-def _click_first_visible_selector(page, selectors: list[str], description: str, wait_after: float = DELAY_AFTER_MODAL_CLOSE) -> bool:
+def _click_first_visible_selector(
+    page, selectors: list[str], description: str, wait_after: float = DELAY_AFTER_MODAL_CLOSE
+) -> bool:
     """Hace click en el primer selector visible. Devuelve True si actuó."""
     for selector in selectors:
         try:
@@ -562,13 +570,15 @@ def dismiss_transient_overlays(page, source_label: str = "", passes: int = OVERL
             break
 
         if attempt < passes:
-            random_delay(DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX,
-                         f"Asentando UI tras cerrar banners{source_suffix}")
+            random_delay(
+                DELAY_PROFILE_SETTLE_MIN, DELAY_PROFILE_SETTLE_MAX, f"Asentando UI tras cerrar banners{source_suffix}"
+            )
 
     return total_actions
 
 
 # ── Registro local / deduplicación ───────────────────────────────────────────
+
 
 def get_registry_connection() -> sqlite3.Connection:
     BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -695,6 +705,7 @@ def find_analysis_path(shortcode: str, statuses: Iterable[str] | None = None) ->
                 if not safe_statuses:
                     return None
                 placeholders = ",".join("?" for _ in safe_statuses)
+                # Nota: placeholders limitados a la allowlist + valores como parametros (seguro).
                 registry_row = conn.execute(
                     f"""
                     SELECT analysis_json_path
@@ -884,6 +895,7 @@ def find_downloaded_payload(shortcode: str) -> dict | None:
 
 
 # ── Estado por fuente ─────────────────────────────────────────────────────────
+
 
 def load_source_state() -> dict[str, dict]:
     data = read_json_file(SOURCE_STATE_FILE)
@@ -1106,7 +1118,7 @@ def get_post_info_from_modal(page) -> dict | None:
     if not m:
         return None
 
-    kind_raw = m.group(1)   # "p" o "reel"
+    kind_raw = m.group(1)  # "p" o "reel"
     shortcode = m.group(2)
 
     # Obtener fecha del elemento <time datetime="...">
@@ -1133,7 +1145,7 @@ def get_post_info_from_modal(page) -> dict | None:
     is_carousel, image_count = detect_carousel_from_modal(page)
 
     return {
-        "kind": kind_raw,          # "p" o "reel"
+        "kind": kind_raw,  # "p" o "reel"
         "shortcode": shortcode,
         "href": f"/{kind_raw}/{shortcode}/",
         "post_datetime": post_datetime or "",
@@ -1209,8 +1221,14 @@ def navigate_profile_with_arrow(
                 except PlaywrightTimeoutError:
                     html_path, png_path = save_debug_artifacts(page, "sin_posts_en_grid")
                     log(f"[WARN] {_ts()} No aparecieron posts en el grid de {source_label}. Debug: {png_path}")
-                    return {"posts": [], "stop_due_to_date": False, "latest_visible_shortcode": "",
-                            "latest_visible_kind": "", "detected_total": 0, "accepted_total": 0}
+                    return {
+                        "posts": [],
+                        "stop_due_to_date": False,
+                        "latest_visible_shortcode": "",
+                        "latest_visible_kind": "",
+                        "detected_total": 0,
+                        "accepted_total": 0,
+                    }
 
             # Clic en el primer post del grid (el más reciente)
             first_link = page.locator(GRID_SELECTOR).first
@@ -1247,7 +1265,9 @@ def navigate_profile_with_arrow(
                     log(f"[INFO] {_ts()} 📌 Primer post visible en modal: {kind}:{shortcode}")
 
                 carousel_label = f" | 📸 carrusel x{image_count}" if is_carousel else ""
-                log(f"[POST] {_ts()} 🔍 #{post_index} {kind}:{shortcode} | fecha={post_info.get('post_date', '?')}{carousel_label}")
+                log(
+                    f"[POST] {_ts()} 🔍 #{post_index} {kind}:{shortcode} | fecha={post_info.get('post_date', '?')}{carousel_label}"
+                )
 
                 if kind == "reel" and content_mode == "post":
                     log(f"[SKIP] {_ts()} 🎬 Reel → pasando al siguiente con flecha: {shortcode}")
@@ -1264,7 +1284,9 @@ def navigate_profile_with_arrow(
                 consecutive_skipped = 0
 
                 if should_stop_after_candidate(post_date_value, date_from):
-                    log(f"[STOP] {_ts()} 📅 Límite de fecha alcanzado → {kind}:{shortcode} | fecha={post_info.get('post_date')}")
+                    log(
+                        f"[STOP] {_ts()} 📅 Límite de fecha alcanzado → {kind}:{shortcode} | fecha={post_info.get('post_date')}"
+                    )
                     stop_due_to_date = True
                     break
 
@@ -1287,8 +1309,12 @@ def navigate_profile_with_arrow(
                 else:
                     accepted_candidates += 1
 
-                save_live_screenshot(page, label=f"✅ Candidato {shortcode}", scroll_idx=post_index,
-                                     extra=f"fecha={post_info.get('post_date')}{carousel_label}")
+                save_live_screenshot(
+                    page,
+                    label=f"✅ Candidato {shortcode}",
+                    scroll_idx=post_index,
+                    extra=f"fecha={post_info.get('post_date')}{carousel_label}",
+                )
 
                 log(f"[OK] {_ts()} ✅ Candidato aceptado: {kind}:{shortcode} | total candidatos: {len(candidates)}")
 
@@ -1297,8 +1323,9 @@ def navigate_profile_with_arrow(
                     log(f"[STOP] {_ts()} 🏁 Sin flecha siguiente. Fin del perfil.")
                     break
 
-                random_delay(DELAY_AFTER_SCROLL_MIN / 2, DELAY_AFTER_SCROLL_MAX / 2,
-                             f"Pausa entre posts en {source_label}")
+                random_delay(
+                    DELAY_AFTER_SCROLL_MIN / 2, DELAY_AFTER_SCROLL_MAX / 2, f"Pausa entre posts en {source_label}"
+                )
 
             log_section(
                 f"FIN EXTRACCIÓN: {source_label} — "
@@ -1320,6 +1347,7 @@ def navigate_profile_with_arrow(
 
 
 # ── Descarga e imagen ─────────────────────────────────────────────────────────
+
 
 def build_post_url(kind: str, shortcode: str) -> str:
     return (
@@ -1347,8 +1375,10 @@ def run_instaloader_for_shortcode(kind: str, shortcode: str, profile_url: str = 
         "instaloader",
         "--no-videos",
         "--no-video-thumbnails",
-        "--dirname-pattern", dirname_pattern,
-        "--filename-pattern", "{date_utc}_UTC",
+        "--dirname-pattern",
+        dirname_pattern,
+        "--filename-pattern",
+        "{date_utc}_UTC",
         "--",
         target,
     ]
@@ -1359,9 +1389,7 @@ def run_instaloader_for_shortcode(kind: str, shortcode: str, profile_url: str = 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Instaloader falló para {shortcode}\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-        )
+        raise RuntimeError(f"Instaloader falló para {shortcode}\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
 
     if result.stdout.strip():
         log(result.stdout.strip())
@@ -1374,7 +1402,7 @@ def run_instaloader_for_shortcode(kind: str, shortcode: str, profile_url: str = 
 
 
 def find_latest_image(post_dir: Path) -> Path | None:
-    candidates = []
+    candidates: list[Path] = []
     for pattern in ("*.jpg", "*.jpeg", "*.png"):
         candidates.extend(post_dir.glob(pattern))
 
@@ -1393,6 +1421,7 @@ def read_caption_for_image(image_path: Path) -> str:
 
 # ── OCR ───────────────────────────────────────────────────────────────────────
 
+
 def preprocess_image(image_path: str):
     img = cv2.imread(image_path)
     if img is None:
@@ -1402,9 +1431,7 @@ def preprocess_image(image_path: str):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    proc = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
-    )
+    proc = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11)
     return img, proc
 
 
@@ -1429,7 +1456,9 @@ def run_ocr(image_path: Path) -> dict:
     preproc_path = image_path.with_name(image_path.stem + "_preproc.jpg")
     cv2.imwrite(str(preproc_path), processed)
 
-    log(f"[OCR] {_ts()} ✓ OCR completado | original={len(text_original)} chars | procesado={len(text_processed)} chars | mejor={len(best)} chars")
+    log(
+        f"[OCR] {_ts()} ✓ OCR completado | original={len(text_original)} chars | procesado={len(text_processed)} chars | mejor={len(best)} chars"
+    )
 
     return {
         "ocr_original": text_original,
@@ -1440,6 +1469,7 @@ def run_ocr(image_path: Path) -> dict:
 
 
 # ── Procesamiento de un post ──────────────────────────────────────────────────
+
 
 def build_download_payload(
     kind: str,
@@ -1594,7 +1624,9 @@ def download_shortcode_with_retry(
         except Exception as exc:
             last_exc = exc
             if attempt <= MAX_RETRIES_PER_POST:
-                log(f"[RETRY] {_ts()} ⚠ Intento {attempt}/{MAX_RETRIES_PER_POST + 1} falló en descarga para {kind}:{shortcode} → {exc}")
+                log(
+                    f"[RETRY] {_ts()} ⚠ Intento {attempt}/{MAX_RETRIES_PER_POST + 1} falló en descarga para {kind}:{shortcode} → {exc}"
+                )
                 random_delay(
                     RETRY_WAIT_MIN,
                     RETRY_WAIT_MAX,
@@ -1615,7 +1647,9 @@ def ocr_payload_with_retry(payload: dict) -> dict:
         except Exception as exc:
             last_exc = exc
             if attempt <= MAX_RETRIES_PER_POST:
-                log(f"[RETRY] {_ts()} ⚠ Intento {attempt}/{MAX_RETRIES_PER_POST + 1} falló en OCR para {kind}:{shortcode} → {exc}")
+                log(
+                    f"[RETRY] {_ts()} ⚠ Intento {attempt}/{MAX_RETRIES_PER_POST + 1} falló en OCR para {kind}:{shortcode} → {exc}"
+                )
                 random_delay(
                     RETRY_WAIT_MIN,
                     RETRY_WAIT_MAX,
@@ -1627,6 +1661,7 @@ def ocr_payload_with_retry(payload: dict) -> dict:
 
 
 # ── Procesamiento de una fuente ───────────────────────────────────────────────
+
 
 def process_source(
     profile_url: str,
@@ -1665,8 +1700,10 @@ def process_source(
         is_carousel = bool(item.get("is_carousel", False))
         image_count = int(item.get("image_count") or 1)
 
-        log(f"\n[POST] {_ts()} 📌 Candidato: {kind}:{shortcode} | fecha={post_date_label}" +
-            (f" | 📸 carrusel x{image_count}" if is_carousel else ""))
+        log(
+            f"\n[POST] {_ts()} 📌 Candidato: {kind}:{shortcode} | fecha={post_date_label}"
+            + (f" | 📸 carrusel x{image_count}" if is_carousel else "")
+        )
 
         if shortcode in acquired_shortcodes:
             stats["skipped"] += 1
@@ -1697,13 +1734,17 @@ def process_source(
             if existing_state in {"processed_cache", "processed_disk"}:
                 results.append(existing_payload)
                 stats["already_processed"] += 1
-                log(f"[SKIP] {_ts()} ⏭ Ya procesado → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}")
+                log(
+                    f"[SKIP] {_ts()} ⏭ Ya procesado → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}"
+                )
                 return True
 
             pending_ocr.append(existing_payload)
             results.append(existing_payload)
             stats["queued_existing"] += 1
-            log(f"[SKIP] {_ts()} ⏭ Descargado previo, encolado para OCR → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}")
+            log(
+                f"[SKIP] {_ts()} ⏭ Descargado previo, encolado para OCR → {kind}:{shortcode} | {existing_post_label(existing_payload, shortcode)}"
+            )
             return True
 
         try:
@@ -1720,9 +1761,10 @@ def process_source(
             pending_ocr.append(payload)
             results.append(payload)
             stats["downloaded"] += 1
-            log(f"[OK] {_ts()} ✅ Descargado y encolado para OCR: {kind}:{shortcode} | total nuevos: {stats['downloaded']}")
-            random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX,
-                         f"Pausa tras descarga en {source_label}")
+            log(
+                f"[OK] {_ts()} ✅ Descargado y encolado para OCR: {kind}:{shortcode} | total nuevos: {stats['downloaded']}"
+            )
+            random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX, f"Pausa tras descarga en {source_label}")
             return True
         except Exception as exc:
             stats["failed"] += 1
@@ -1749,8 +1791,7 @@ def process_source(
         return stats
 
     detected = [
-        f"{p['kind']}:{p['shortcode']}" + (f"@{p.get('post_date')}" if p.get("post_date") else "")
-        for p in posts
+        f"{p['kind']}:{p['shortcode']}" + (f"@{p.get('post_date')}" if p.get("post_date") else "") for p in posts
     ]
     log(f"[SOURCE] {_ts()} 📋 Candidatos en {source_label}: {detected}")
     if extraction.get("stop_due_to_date"):
@@ -1772,6 +1813,7 @@ def process_source(
 
 # ── Lote de fuentes ───────────────────────────────────────────────────────────
 
+
 def write_scrape_summary_log(
     source_jobs: list[dict],
     date_from: date,
@@ -1785,7 +1827,10 @@ def write_scrape_summary_log(
 ) -> None:
     """Escribe un log de resumen al final de cada ejecución."""
     run_end_iso = utc_now_iso()
-    sources = [build_source_metadata(str(j.get("profile_url", ""))).get("source_label") or str(j.get("profile_url", "")) for j in source_jobs]
+    sources = [
+        build_source_metadata(str(j.get("profile_url", ""))).get("source_label") or str(j.get("profile_url", ""))
+        for j in source_jobs
+    ]
     lower, upper = build_effective_date_bounds(date_from, date_to)
     summary_lines = [
         "",
@@ -1817,8 +1862,9 @@ def write_scrape_summary_log(
 
 # ── Lote de fuentes ───────────────────────────────────────────────────────────
 
+
 def run_scrape_jobs(
-    source_jobs: list[dict[str, int | str]],
+    source_jobs: list[dict[str, str]],
     date_from: date | None = None,
     date_to: date | None = None,
     content_mode: str = "both",
@@ -1849,14 +1895,18 @@ def run_scrape_jobs(
     lower, upper = build_effective_date_bounds(date_from, date_to)
 
     log_section(f"INICIO DE EJECUCIÓN {run_prefix.upper()} — {run_start_iso}")
-    log(f"[RUN] {_ts()} 🗓 Rango temporal: desde {lower.isoformat() if lower else '?'} hasta {upper.isoformat() if upper else local_today().isoformat()}")
+    log(
+        f"[RUN] {_ts()} 🗓 Rango temporal: desde {lower.isoformat() if lower else '?'} hasta {upper.isoformat() if upper else local_today().isoformat()}"
+    )
     log(f"[RUN] {_ts()} 🧩 Tipo de contenido: {build_content_mode_label(content_mode)}")
     log(f"[RUN] {_ts()} 📡 Fuentes: {len(source_jobs)}")
     log(f"[RUN] {_ts()} 🪜 Modo: flecha Instagram → fecha detectada en modal → descarga → OCR por lote")
     log(f"[RUN] {_ts()} ⚙  Pacing: perfil={BEHAVIOR_PROFILE} | factor={DELAY_FACTOR} | headless={BROWSER_HEADLESS}")
     for i, job in enumerate(source_jobs, 1):
         meta = build_source_metadata(str(job.get("profile_url", "")))
-        log(f"[RUN] {_ts()}   {i}. {meta.get('source_label') or job.get('profile_url')} (corte por fecha: {date_from.isoformat()})")
+        log(
+            f"[RUN] {_ts()}   {i}. {meta.get('source_label') or job.get('profile_url')} (corte por fecha: {date_from.isoformat()})"
+        )
 
     init_registry()
     synced = bootstrap_registry_from_disk()
@@ -1910,8 +1960,11 @@ def run_scrape_jobs(
         total_failed_download += source_stats["failed"]
 
         if idx < len(source_jobs):
-            random_delay(DELAY_BETWEEN_SOURCES_MIN, DELAY_BETWEEN_SOURCES_MAX,
-                         f"Pausa entre fuente {idx} ({source_label}) y la siguiente")
+            random_delay(
+                DELAY_BETWEEN_SOURCES_MIN,
+                DELAY_BETWEEN_SOURCES_MAX,
+                f"Pausa entre fuente {idx} ({source_label}) y la siguiente",
+            )
 
     summary_count_after_download = write_summary_snapshot()
     log_section(f"ETAPA 1 COMPLETADA — DESCARGAS — {utc_now_iso()}")
@@ -1941,8 +1994,7 @@ def run_scrape_jobs(
                 log(f"[ERROR] {_ts()} ❌ OCR fallido: {kind}:{shortcode} → {exc}")
 
             if idx < len(pending_ocr):
-                random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX,
-                             f"Pausa entre OCR {idx} y {idx + 1}")
+                random_delay(DELAY_BETWEEN_POSTS_MIN, DELAY_BETWEEN_POSTS_MAX, f"Pausa entre OCR {idx} y {idx + 1}")
     else:
         log(f"[RUN] {_ts()} ℹ No hubo posts pendientes para OCR.")
 
@@ -1984,6 +2036,7 @@ def run_scrape_jobs(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def parse_cli_options(argv: list[str]) -> tuple[list[str], date | None, date | None, str]:
     """

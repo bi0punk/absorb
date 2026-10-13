@@ -10,3 +10,12 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+# Las consultas "dinámicas" de este repo construyen solo numeros de placeholder (?)
+# a partir de una allowlist fija y SIEMPRE pasan los valores como parametros,
+# por lo que B608 es un falso positivo aqui.
+[tool.bandit]
+skips = ["B608"]

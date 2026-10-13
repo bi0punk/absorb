@@ -1,6 +1,6 @@
 import random
 import time
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 
 from .constants import MANUAL_LOG_FILE, RUNTIME_LOG_FILE
 
@@ -12,6 +12,7 @@ def _ts() -> str:
 def append_manual_log(message: str, ignore_scheduler: bool = True) -> None:
     if ignore_scheduler:
         import os
+
         if os.environ.get("SCRAPER_RUN_CONTEXT") == "scheduler":
             return
     MANUAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -44,18 +45,19 @@ def utc_now_iso() -> str:
 
 def local_today() -> date:
     import os
+
     tz_str = os.environ.get("TZ", "America/Santiago")
+    tz: tzinfo
     try:
         import zoneinfo
+
         tz = zoneinfo.ZoneInfo(tz_str)
     except Exception:
         tz = UTC
     return datetime.now(tz).date()
 
 
-def build_effective_date_bounds(
-    date_from: date | None, date_to: date | None
-) -> tuple[date | None, date | None]:
+def build_effective_date_bounds(date_from: date | None, date_to: date | None) -> tuple[date | None, date | None]:
     effective_from = date_from
     effective_to = date_to
     if effective_from and effective_to and effective_from > effective_to:
@@ -88,6 +90,7 @@ def existing_post_label(payload: dict | None, shortcode: str) -> str:
 def random_delay(min_sec: float, max_sec: float, label: str = "") -> float:
     delay = random.uniform(min_sec, max_sec)
     import os
+
     factor_str = os.environ.get("SCRAPER_DELAY_FACTOR", "1.0")
     try:
         factor = float(factor_str)
